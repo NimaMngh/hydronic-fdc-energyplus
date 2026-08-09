@@ -45,19 +45,6 @@ detector trained on zone-level features. That is also why its diagnosis path
 reads the supply temperature directly instead of inferring the fault from zone
 behaviour alone.
 
-## Terminology: paper vs. code
-
-Two names differ between the article and the code. The identifiers were kept
-as they are so that existing run configs and logged CSVs stay readable:
-
-| Paper | Code, configs and logs |
-|---|---|
-| supply-setpoint bias | `supply_curve` |
-| supervisory recovery potential | "compensability", e.g. `plot_compensability_spectrum()` in Phase 6 |
-
-The stuck-open case is a zone-level over-delivery setpoint-bias proxy for a
-stuck-open valve, not a literal valve model.
-
 ## Model
 
 The building is the ASHRAE 90.1-2022 RetailStandalone prototype from the DOE
