@@ -1,0 +1,98 @@
+cff-version: 1.2.0
+title: >-
+  Integrated fault detection and supervisory compensation for hydronic radiator
+  faults in district-heated buildings
+message: >-
+  If you use this software, please cite both the software itself and the
+  accompanying article listed under preferred-citation.
+type: software
+authors:
+  - family-names: Monghasemi
+    given-names: Nima
+    email: nima.monghasemi@mdu.se
+    orcid: 'https://orcid.org/0000-0002-9847-7477'
+    affiliation: >-
+      Department of Engineering Sciences, Mälardalen University, Västerås,
+      Sweden
+  - family-names: Vouros
+    given-names: Stavros
+    email: stavros.vouros@mdu.se
+    orcid: 'https://orcid.org/0000-0002-2737-3769'
+    affiliation: >-
+      Department of Engineering Sciences, Mälardalen University, Västerås,
+      Sweden
+  - family-names: Kyprianidis
+    given-names: Konstantinos
+    email: konstantinos.kyprianidis@mdu.se
+    orcid: 'https://orcid.org/0000-0002-8466-356X'
+    affiliation: >-
+      Department of Engineering Sciences, Mälardalen University, Västerås,
+      Sweden
+  - family-names: Vadiee
+    given-names: Amir
+    email: amir.vadiee@mdu.se
+    orcid: 'https://orcid.org/0000-0001-9426-4792'
+    affiliation: >-
+      Department of Engineering Sciences, Mälardalen University, Västerås,
+      Sweden
+abstract: >-
+  Code, trained detectors and simulation inputs for an integrated fault
+  detection and compensation framework for hydronic radiator faults in
+  district-heated buildings. Three unsupervised anomaly detectors, trained only
+  on a fault-free heating season, run inside the EnergyPlus solver through the
+  Python API. A signature-based ladder classifies the detected anomaly as a
+  stuck-closed valve, a zone-level over-delivery setpoint bias, or a
+  system-level supply-temperature setpoint bias, and a supervisory controller
+  adjusts the district-heating supply setpoint accordingly within the same
+  simulation. The repository covers detector training, the in-the-loop runtime,
+  the severity and compensation-parameter sweeps, the compound-fault stress
+  tests, and the analysis that produces the reported tables.
+keywords:
+  - district heating
+  - hydronic radiator
+  - fault detection
+  - fault diagnosis
+  - fault compensation
+  - supervisory control
+  - building energy simulation
+  - EnergyPlus
+  - unsupervised learning
+  - anomaly detection
+license: MIT
+repository-code: 'https://github.com/NimaMngh/hydronic-fdc-energyplus'
+version: 1.0.0
+date-released: '2026-08-09'
+preferred-citation:
+  type: article
+  title: >-
+    Integrated fault detection and supervisory compensation for hydronic
+    radiator faults in district-heated buildings
+  authors:
+    - family-names: Monghasemi
+      given-names: Nima
+      email: nima.monghasemi@mdu.se
+      orcid: 'https://orcid.org/0000-0002-9847-7477'
+      affiliation: >-
+        Department of Engineering Sciences, Mälardalen University, Västerås,
+        Sweden
+    - family-names: Vouros
+      given-names: Stavros
+      orcid: 'https://orcid.org/0000-0002-2737-3769'
+      affiliation: >-
+        Department of Engineering Sciences, Mälardalen University, Västerås,
+        Sweden
+    - family-names: Kyprianidis
+      given-names: Konstantinos
+      orcid: 'https://orcid.org/0000-0002-8466-356X'
+      affiliation: >-
+        Department of Engineering Sciences, Mälardalen University, Västerås,
+        Sweden
+    - family-names: Vadiee
+      given-names: Amir
+      orcid: 'https://orcid.org/0000-0001-9426-4792'
+      affiliation: >-
+        Department of Engineering Sciences, Mälardalen University, Västerås,
+        Sweden
+  journal: Results in Engineering
+  year: 2026
+  status: submitted
