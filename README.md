@@ -109,7 +109,7 @@ scripts read those logs, and the derived tables in `results/` are what the
 repository carries instead.
 
 The article's figures are not included either. The scripts that draw them are
-here — in `analysis/` and `parameter_studies/figures/` — so every figure can be
+here in `analysis/` and `parameter_studies/figures/` so every figure can be
 regenerated from the tables in `results/` and the run logs.
 
 ## Running it
