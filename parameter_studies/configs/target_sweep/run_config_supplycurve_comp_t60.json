@@ -1,0 +1,124 @@
+{
+  "run_name": "supplycurve_comp_t60",
+  "scenario": "supply_curve_fault_with_compensation",
+  "fault_type": "supply_curve",
+  "idf_path": "RetailStandalone_supplycurve.idf",
+  "epw_path": "Vasteras2007_2021.epw",
+  "models_dir": "models",
+  "output_root": "runs",
+  "zone_name": "Core_Retail",
+  "threshold_key": "p1",
+  "log_every_n_steps": 1,
+  "fault_window": {
+    "start_month": 1,
+    "start_day": 15,
+    "end_month": 1,
+    "end_day": 16,
+    "start_hour": 0,
+    "end_hour": 24
+  },
+  "supply_curve_bias_K": -8.0,
+  "baseline_supply_temp_C": 60.0,
+  "supply_node_name": "HW Supply Outlet Node",
+  "force_schedule_override": true,
+  "var_mapping": {
+    "zone_temp": [
+      "Zone Mean Air Temperature",
+      "Core_Retail"
+    ],
+    "htg_sp": [
+      "Zone Thermostat Heating Setpoint Temperature",
+      "Core_Retail"
+    ],
+    "m_dot": [
+      "System Node Mass Flow Rate",
+      "Core_Retail HW Inlet Node"
+    ],
+    "t_inlet": [
+      "System Node Temperature",
+      "Core_Retail HW Inlet Node"
+    ],
+    "t_outlet": [
+      "System Node Temperature",
+      "Core_Retail HW Outlet Node"
+    ],
+    "t_outdoor": [
+      "Site Outdoor Air Drybulb Temperature",
+      "Environment"
+    ],
+    "t_supply": [
+      "System Node Temperature",
+      "HW Supply Outlet Node"
+    ]
+  },
+  "extra_zone_sensors": {
+    "Back_Space": {
+      "zone_temp": [
+        "Zone Mean Air Temperature",
+        "Back_Space"
+      ],
+      "htg_sp": [
+        "Zone Thermostat Heating Setpoint Temperature",
+        "Back_Space"
+      ],
+      "m_dot": [
+        "System Node Mass Flow Rate",
+        "Back_Space HW Inlet Node"
+      ],
+      "t_inlet": [
+        "System Node Temperature",
+        "Back_Space HW Inlet Node"
+      ],
+      "t_outlet": [
+        "System Node Temperature",
+        "Back_Space HW Outlet Node"
+      ]
+    },
+    "Front_Retail": {
+      "zone_temp": [
+        "Zone Mean Air Temperature",
+        "Front_Retail"
+      ],
+      "htg_sp": [
+        "Zone Thermostat Heating Setpoint Temperature",
+        "Front_Retail"
+      ],
+      "m_dot": [
+        "System Node Mass Flow Rate",
+        "Front_Retail HW Inlet Node"
+      ],
+      "t_inlet": [
+        "System Node Temperature",
+        "Front_Retail HW Inlet Node"
+      ],
+      "t_outlet": [
+        "System Node Temperature",
+        "Front_Retail HW Outlet Node"
+      ]
+    }
+  },
+  "compensation_enabled": true,
+  "voting_strategy": "majority",
+  "detection_model": "lof",
+  "persistence_steps": 6,
+  "release_steps": 6,
+  "release_steps_override": {
+    "supply_curve": 12
+  },
+  "compensation_config": {
+    "baseline_supply_temp_C": 60.0,
+    "ramp_factor": 0.2,
+    "targets": {
+      "stuck_closed": 70.0,
+      "stuck_open": 50.0,
+      "supply_curve": 60.0
+    }
+  },
+  "diagnosis_config": {
+    "flow_ratio_low": 0.6,
+    "temp_error_thresh_C": 0.3,
+    "multi_zone_count": 2,
+    "supply_temp_deviation_thresh_K": 5.0
+  },
+  "idf_notes": "IDF must have: (1) EMS:Actuator for Act_HWLoop_SPM_Schedule REMOVED. Both fault injection and compensation use the same schedule actuator. The compensation callback (inside_system_iteration_loop) runs AFTER fault injection (begin_zone_timestep), so compensation overrides the faulty value when active."
+}

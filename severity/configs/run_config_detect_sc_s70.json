@@ -1,0 +1,45 @@
+{
+  "run_name": "stuckclosed_detect_sc_s70",
+  "idf_path": "../severity/idfs/RetailStandalone_sc_s70_detect.idf",
+  "epw_path": "../Vasteras2007_2021.epw",
+  "models_dir": "../models",
+  "output_root": "../severity/runs",
+  "zone_name": "Core_Retail",
+  "threshold_key": "default",
+  "log_every_n_steps": 1,
+  "fault_type": "stuck_closed",
+  "fault_window": {
+    "start_month": 1,
+    "start_day": 15,
+    "end_month": 1,
+    "end_day": 16,
+    "start_hour": 8,
+    "end_hour": 17
+  },
+  "var_mapping": {
+    "zone_temp": [
+      "Zone Mean Air Temperature",
+      "Core_Retail"
+    ],
+    "htg_sp": [
+      "Zone Thermostat Heating Setpoint Temperature",
+      "Core_Retail"
+    ],
+    "m_dot": [
+      "System Node Mass Flow Rate",
+      "Core_Retail HW Inlet Node"
+    ],
+    "t_inlet": [
+      "System Node Temperature",
+      "Core_Retail HW Inlet Node"
+    ],
+    "t_outlet": [
+      "System Node Temperature",
+      "Core_Retail HW Outlet Node"
+    ],
+    "t_outdoor": [
+      "Site Outdoor Air Drybulb Temperature",
+      "Environment"
+    ]
+  }
+}

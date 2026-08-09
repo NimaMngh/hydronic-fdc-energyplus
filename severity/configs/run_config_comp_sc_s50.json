@@ -1,0 +1,65 @@
+{
+  "run_name": "stuckclosed_comp_sc_s50",
+  "idf_path": "../severity/idfs/RetailStandalone_sc_s50_comp.idf",
+  "epw_path": "../Vasteras2007_2021.epw",
+  "models_dir": "../models",
+  "output_root": "../severity/runs",
+  "zone_name": "Core_Retail",
+  "threshold_key": "p1",
+  "log_every_n_steps": 1,
+  "fault_type": "stuck_closed",
+  "fault_window": {
+    "start_month": 1,
+    "start_day": 15,
+    "end_month": 1,
+    "end_day": 16,
+    "start_hour": 8,
+    "end_hour": 17
+  },
+  "var_mapping": {
+    "zone_temp": [
+      "Zone Mean Air Temperature",
+      "Core_Retail"
+    ],
+    "htg_sp": [
+      "Zone Thermostat Heating Setpoint Temperature",
+      "Core_Retail"
+    ],
+    "m_dot": [
+      "System Node Mass Flow Rate",
+      "Core_Retail HW Inlet Node"
+    ],
+    "t_inlet": [
+      "System Node Temperature",
+      "Core_Retail HW Inlet Node"
+    ],
+    "t_outlet": [
+      "System Node Temperature",
+      "Core_Retail HW Outlet Node"
+    ],
+    "t_outdoor": [
+      "Site Outdoor Air Drybulb Temperature",
+      "Environment"
+    ]
+  },
+  "compensation_enabled": true,
+  "voting_strategy": "majority",
+  "persistence_steps": 3,
+  "release_steps": 6,
+  "compensation_config": {
+    "baseline_supply_temp_C": 60.0,
+    "ramp_factor": 0.2,
+    "targets": {
+      "stuck_closed": 70.0,
+      "stuck_open": 50.0,
+      "supply_curve": 70.0
+    }
+  },
+  "diagnosis_config": {
+    "flow_ratio_low": 0.6,
+    "temp_error_thresh_C": 0.3,
+    "multi_zone_count": 2
+  },
+  "idf_notes": "Derived from RetailStandalone_stuckclosed_detect.idf by apply_phase5_patch.py: removed the Act_HWLoop_SPM_Schedule EMS:Actuator declaration to resolve EMS ownership conflict with Python API compensation. Fault injection ERL (flow restriction via Act_CoreRetail_CoilIn_MdotMax) is intact. The Python API dynamically creates its own actuator handle for Schedule:Compact / HW-Loop-Temp-Schedule / Schedule Value.",
+  "detection_model": null
+}

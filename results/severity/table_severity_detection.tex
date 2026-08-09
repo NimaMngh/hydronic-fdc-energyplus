@@ -1,0 +1,27 @@
+\begin{table}[ht]
+  \centering
+  \caption{Detection performance across fault severity levels.}
+  \label{tab:severity_detection}
+  \small
+  \begin{tabular}{llrrrrrr}
+    \toprule
+    Fault Type & Level & Severity & Precision & Recall & F1 & FPR & Latency [min] \\
+    \midrule
+    Stuck-Closed & sc_s10 & 0.100 & 0.794 & 1.000 & 0.885 & 0.002 & 20.000 \\
+    Stuck-Closed & sc_s20 & 0.200 & 0.818 & 1.000 & 0.900 & 0.002 & 20.000 \\
+    Stuck-Closed & sc_s30 & 0.300 & 0.818 & 1.000 & 0.900 & 0.002 & 20.000 \\
+    Stuck-Closed & sc_s50 & 0.500 & 0.636 & 0.389 & 0.483 & 0.002 & 20.000 \\
+    Stuck-Closed & sc_s70 & 0.700 & 0.000 & 0.000 & 0.000 & 0.002 & -- \\
+    Stuck-Open & so_b05 & 0.500 & 0.000 & 0.000 & 0.000 & 0.002 & -- \\
+    Stuck-Open & so_b10 & 1.000 & 0.767 & 0.917 & 0.835 & 0.002 & 100.000 \\
+    Stuck-Open & so_b20 & 2.000 & 0.805 & 0.917 & 0.857 & 0.002 & 100.000 \\
+    Stuck-Open & so_b40 & 4.000 & 0.805 & 0.917 & 0.857 & 0.002 & 100.000 \\
+    Stuck-Open & so_b60 & 6.000 & 0.805 & 0.917 & 0.857 & 0.002 & 100.000 \\
+    Supply-Curve Bias & scu_k02 & 2.000 & 0.276 & 0.677 & 0.392 & 0.021 & 520.000 \\
+    Supply-Curve Bias & scu_k05 & 5.000 & 0.358 & 0.994 & 0.527 & 0.021 & 530.000 \\
+    Supply-Curve Bias & scu_k08 & 8.000 & 0.356 & 0.981 & 0.522 & 0.021 & 550.000 \\
+    Supply-Curve Bias & scu_k12 & 12.000 & 0.345 & 0.937 & 0.504 & 0.021 & 600.000 \\
+    Supply-Curve Bias & scu_k15 & 15.000 & 0.334 & 0.892 & 0.486 & 0.021 & 630.000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}

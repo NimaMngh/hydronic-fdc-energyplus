@@ -1,0 +1,1168 @@
+# -*- coding: utf-8 -*-
+"""
+Phase 5: ML-in-the-Loop Detection + Diagnosis + Compensation
+=============================================================
+Extends Phase 4 (detection-only) with:
+  - Majority voting across three ML models (configurable: any / majority / consensus)
+  - Persistence filter to suppress transient false positives
+  - Signature-based fault diagnosis (stuck_closed / stuck_open / supply_curve)
+  - Supply-temperature compensation via HW-Loop-Temp-Schedule actuator
+  - Smooth ramping with configurable ramp factor and target per fault type
+
+Callback architecture (three callbacks):
+  1. begin_zone_timestep_before_init_heat_balance  ->  fault injection
+  2. inside_system_iteration_loop                  ->  compensation actuation
+  3. end_zone_timestep_after_zone_reporting         ->  sensor read + features +
+                                                       ML inference + vote +
+                                                       diagnosis + logging
+
+The detection result from timestep N drives compensation at timestep N+1.
+This one-step (10 min) delay is physically realistic: a real supervisory
+controller would also act on the most recent measurement, not on the current
+(unmeasured) state.
+
+Supports the same three fault types as Phase 4:
+  - stuck_closed:  zone-level flow restriction via Erl EMS (IDF-based)
+  - stuck_open:    zone-level thermostat bias via Python API
+  - supply_curve:  system-level supply temperature bias via Python API
+
+IDF PREPARATION RULE (critical):
+  For every fault type, the IDF used with this script MUST satisfy:
+    (a) The EnergyManagementSystem:Actuator declaration for
+        Act_HWLoop_SPM_Schedule must be REMOVED (or commented out)
+        so that the Python API can control the HW-Loop-Temp-Schedule.
+    (b) The EnergyManagementSystem:ProgramCallingManager for FDDC_Manager
+        (the Erl compensation program) must be DISABLED / removed,
+        since compensation is now handled by this Python script.
+    (c) All fault-injection EMS objects (FaultInjection_Program,
+        Update_Coil_MdotMax, fault schedules, and the
+        Act_CoreRetail_CoilIn_MdotMax actuator) must be RETAINED
+        for stuck_closed fault injection.
+  See PoC Report Section 6.1 for details.
+
+Unknown diagnoses increment a separate unknown_streak counter rather than
+resetting the detection streak, so a valid diagnosis one step later still
+fires without waiting a full persistence window. After unknown_max_retries
+consecutive unknowns the detection streak is reset to stop retry loops.
+
+Diagnosis reads both the instantaneous temp_error and the 2 h rolling
+average. For stuck_open an instantaneous temp_error above threshold is
+enough when paired with a relaxed rolling-average condition, which keeps
+compensation latency near 30 min rather than 100 min.
+
+Supply_curve compensation is written at begin_zone_timestep, where the plant
+setpoint manager actually reads the schedule; the write inside the system
+iteration loop would land too late, so that path returns early.
+
+Supply_curve compensation is held for the whole fault window. Releasing on
+votes alone causes hunting: compensation restores zone_temp, the detectors
+go quiet, compensation releases, supply drops back to 45 C, the zone crashes
+and the fault is re-detected.
+
+Usage:
+    conda activate FDC
+    python Phase5_ML_compensate.py run_config_comp_stuckclosed.json
+
+Author:  Nima Monghasemi
+Date:    February 2026 (revised March 2026)
+"""
+
+import sys
+import os
+import json
+import shutil
+import argparse
+from datetime import datetime
+from collections import deque
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import joblib
+
+sys.path.insert(0, r"C:\EnergyPlusV25-1-0")
+from pyenergyplus.api import EnergyPlusAPI
+
+
+# ====================================================================
+#  Controller class
+# ====================================================================
+
+class FaultCompensationController:
+    """
+    Unified controller for ML detection, signature-based diagnosis,
+    and supply-temperature compensation inside the EnergyPlus loop.
+    """
+
+    def __init__(self, config: dict, models: dict, scaler,
+                 thresholds: dict, training_cfg: dict):
+        self.config = config
+        self.models = models
+        self.scaler = scaler
+        self.thresholds = thresholds
+        self.training_cfg = training_cfg
+
+        # ---- Feature engineering parameters (from training) ----
+        self.feature_cols = training_cfg['feature_columns']
+        self.roll_window = training_cfg['rolling_window_steps']
+        self.peak_flow = training_cfg['peak_flow_kg_s']
+        self.occupied_threshold = training_cfg['occupied_sp_threshold_C']
+        self.min_flow = training_cfg['min_flow_threshold_kg_s']
+
+        # ---- State buffers (feature engineering) ----
+        self.temp_error_buffer = deque(maxlen=self.roll_window)
+        self.prev_zone_temp = None
+        self.was_active_last_step = False
+        self.timestep_idx = 0
+        self.log_rows = []
+
+        # ---- API handles ----
+        self.handles = {}
+        self.handles_ready = False
+        self.fault_actuator = -1        # stuck_open: heating setpoint
+        self.cooling_actuator = -1      # stuck_open: cooling guard
+        self.supply_temp_actuator = -1  # supply_curve fault injection
+        self.comp_supply_actuator = -1  # compensation: HW-Loop-Temp-Schedule
+        self.sched_handle = -1          # HTGSETP_SCH_YES_OPTIMUM
+        self.sched_handle_no_opt = -1   # HTGSETP_SCH_NO_OPTIMUM
+        self.extra_zone_handles = {}
+
+        # ---- Compensation configuration ----
+        comp_cfg = config.get('compensation_config', {})
+        self.comp_enabled = config.get('compensation_enabled', False)
+        self.baseline_supply = comp_cfg.get('baseline_supply_temp_C', 60.0)
+        self.ramp_factor = comp_cfg.get('ramp_factor', 0.2)
+        self.comp_targets = comp_cfg.get('targets', {
+            'stuck_closed': 70.0,
+            'stuck_open': 50.0,
+            'supply_curve': 70.0
+        })
+
+        # ---- Voting configuration ----
+        self.voting_strategy = config.get('voting_strategy', 'majority')
+        self.persistence_steps = config.get('persistence_steps', 3)
+        self.release_steps = config.get('release_steps', 6)
+        # Single-model detection override. When detection_model names a
+        # specific model (e.g. 'lof'), only that model's anomaly flag drives
+        # the persistence filter, bypassing the multi-model voting logic.
+        # This aligns runtime detection with the best configuration that
+        # Phase 4b identified.
+        self.detection_model = config.get('detection_model', None)
+        # Per-fault-type release step overrides. System-level faults like
+        # supply_curve benefit from longer release windows because the
+        # compensation itself reduces the anomaly signal, causing premature
+        # release. The compensation then drops, the fault reasserts, and
+        # the system cycles. A longer window sustains compensation through
+        # these transient dips.
+        self.release_steps_override = config.get('release_steps_override', {})
+
+        # ---- Diagnosis configuration ----
+        diag_cfg = config.get('diagnosis_config', {})
+        self.diag_flow_ratio_low = diag_cfg.get('flow_ratio_low', 0.6)
+        self.diag_temp_error_thresh = diag_cfg.get('temp_error_thresh_C', 0.3)
+        self.diag_multi_zone_count = diag_cfg.get('multi_zone_count', 2)
+
+        # Separate threshold for the instantaneous temp_error used in the
+        # "fast path" stuck_open detection. The rolling average can lag by
+        # up to roll_window steps; the instantaneous value as a supplementary
+        # signal cuts that latency.
+        self.diag_instant_te_thresh = diag_cfg.get(
+            'instant_temp_error_thresh_C', 0.5)
+
+        # Supply-temperature deviation threshold for direct supply_curve
+        # diagnosis. If the measured supply temp deviates from the
+        # baseline by more than this amount (in K), it is a strong
+        # indicator of a supply curve fault regardless of zone temp_error.
+        self.diag_supply_temp_dev_K = diag_cfg.get(
+            'supply_temp_deviation_thresh_K', 5.0)
+
+        # Maximum consecutive unknown diagnoses before the detection streak
+        # is hard-reset. Prevents infinite retry loops where the ensemble
+        # keeps triggering on FPs that never match a known signature.
+        self.unknown_max_retries = config.get('unknown_max_retries', 3)
+
+        # ---- Compensation state machine ----
+        self.current_setpoint = self.baseline_supply
+        self.comp_active = False
+        self.diagnosed_fault = None
+        self.detect_streak = 0
+        self.clear_streak = 0
+
+        # Consecutive unknown diagnoses
+        self.unknown_streak = 0
+
+        # ---- Diagnostic counters (for validation summary) ----
+        self.n_unknown_total = 0
+        self.n_compensation_activations = 0
+        self.n_false_comp_activations = 0   # comp activated outside fault window
+
+        # ---- Per-timestep synchronisation ----
+        self._ts_counter = 0
+        self._last_comp_ts = -1
+
+        # ---- Latest features (shared between logging and diagnosis) ----
+        self._latest_temp_error_2h_avg = np.nan
+        self._latest_flow_ratio = np.nan
+        self._latest_temp_error_instant = np.nan
+
+    # ================================================================
+    #  Handle setup
+    # ================================================================
+
+    def setup_handles(self, state) -> bool:
+        """Resolve variable and actuator handles once API data is ready."""
+        if self.handles_ready:
+            return True
+        if not api.exchange.api_data_fully_ready(state):
+            return False
+
+        vm = self.config['var_mapping']
+        all_ok = True
+
+        # --- Primary zone sensors ---
+        for key, (var_type, var_name) in vm.items():
+            h = api.exchange.get_variable_handle(state, var_type, var_name)
+            if h == -1:
+                print(f"ERROR: Handle failed for {key}: '{var_type}' '{var_name}'")
+                all_ok = False
+            self.handles[key] = h
+
+        # --- Fault-type-specific actuators (identical to Phase 4) ---
+        fault_type = self.config.get('fault_type', '')
+
+        if fault_type == 'stuck_open':
+            self.fault_actuator = api.exchange.get_actuator_handle(
+                state, "Zone Temperature Control", "Heating Setpoint",
+                self.config['zone_name']
+            )
+            if self.fault_actuator == -1:
+                print(f"ERROR: Heating Setpoint actuator failed on "
+                      f"{self.config['zone_name']}")
+                all_ok = False
+
+            self.cooling_actuator = api.exchange.get_actuator_handle(
+                state, "Zone Temperature Control", "Cooling Setpoint",
+                self.config['zone_name']
+            )
+            if self.cooling_actuator == -1:
+                print(f"WARNING: Cooling setpoint actuator not found.")
+
+        # supply_curve needs no actuator here: it shares the compensation
+        # actuator when comp is enabled, and resolves its own below when not.
+
+        # --- Compensation actuator (always resolve if enabled) ---
+        if self.comp_enabled:
+            self.comp_supply_actuator = api.exchange.get_actuator_handle(
+                state,
+                "Schedule:Compact",
+                "Schedule Value",
+                "HW-Loop-Temp-Schedule"
+            )
+            if self.comp_supply_actuator == -1:
+                print("ERROR: Compensation actuator failed for "
+                      "HW-Loop-Temp-Schedule!")
+                print("  Make sure the EMS actuator declaration for this "
+                      "schedule has been REMOVED from the IDF "
+                      "(actuator ownership rule).")
+                all_ok = False
+            else:
+                print(f"  Compensation actuator resolved: Schedule:Compact / "
+                      f"Schedule Value / HW-Loop-Temp-Schedule")
+
+            if fault_type == 'supply_curve':
+                self.supply_temp_actuator = self.comp_supply_actuator
+
+        elif fault_type == 'supply_curve':
+            force_sched = self.config.get('force_schedule_override', False)
+            if not force_sched:
+                supply_node = self.config.get('supply_node_name',
+                                              'HW Supply Outlet Node')
+                self.supply_temp_actuator = api.exchange.get_actuator_handle(
+                    state, "System Node Setpoint", "Temperature Setpoint",
+                    supply_node
+                )
+                if self.supply_temp_actuator != -1:
+                    print(f"  Supply node actuator resolved (non-comp path).")
+                    self.config['_supply_fault_via_schedule'] = False
+                else:
+                    force_sched = True
+            if force_sched:
+                self.supply_temp_actuator = api.exchange.get_actuator_handle(
+                    state, "Schedule:Compact", "Schedule Value",
+                    "HW-Loop-Temp-Schedule"
+                )
+                if self.supply_temp_actuator == -1:
+                    print("ERROR: Schedule actuator failed (non-comp path)!")
+                    all_ok = False
+                else:
+                    self.config['_supply_fault_via_schedule'] = True
+
+        # --- Extra zone sensors (multi-zone logging) ---
+        extra_zones = self.config.get('extra_zone_sensors', {})
+        for zone_label, zone_vm in extra_zones.items():
+            self.extra_zone_handles[zone_label] = {}
+            for key, (var_type, var_name) in zone_vm.items():
+                h = api.exchange.get_variable_handle(state, var_type, var_name)
+                if h == -1:
+                    print(f"WARNING: Extra zone handle failed: "
+                          f"{zone_label}/{key}")
+                self.extra_zone_handles[zone_label][key] = h
+
+        # --- Schedule handles ---
+        self.sched_handle = api.exchange.get_variable_handle(
+            state, "Schedule Value", "HTGSETP_SCH_YES_OPTIMUM"
+        )
+        if self.sched_handle == -1:
+            print("ERROR: Schedule handle failed for "
+                  "HTGSETP_SCH_YES_OPTIMUM")
+            all_ok = False
+
+        self.sched_handle_no_opt = api.exchange.get_variable_handle(
+            state, "Schedule Value", "HTGSETP_SCH_NO_OPTIMUM"
+        )
+        if self.sched_handle_no_opt == -1:
+            print("WARNING: Schedule handle failed for "
+                  "HTGSETP_SCH_NO_OPTIMUM")
+
+        if not all_ok:
+            api.runtime.stop_simulation(state)
+            return False
+
+        n_extra = sum(len(zh) for zh in self.extra_zone_handles.values())
+        print(f"[{self.timestep_idx}] All handles resolved.  "
+              f"fault_type='{fault_type}'  "
+              f"compensation={'ON' if self.comp_enabled else 'OFF'}")
+        print(f"  Extra zone sensors: {n_extra} across "
+              f"{len(self.extra_zone_handles)} zones")
+        if self.comp_enabled:
+            det_mode = (f"single-model ({self.detection_model})"
+                        if self.detection_model else self.voting_strategy)
+            print(f"  Detection: {det_mode}  "
+                  f"threshold_key={self.config.get('threshold_key', 'default')}  "
+                  f"persist={self.persistence_steps}  "
+                  f"release={self.release_steps}  "
+                  f"unknown_max_retries={self.unknown_max_retries}")
+            if self.release_steps_override:
+                print(f"  Release overrides: {self.release_steps_override}")
+            print(f"  Targets: {self.comp_targets}")
+            print(f"  Diagnosis thresholds: flow_ratio_low={self.diag_flow_ratio_low}, "
+                  f"temp_error_thresh={self.diag_temp_error_thresh}°C, "
+                  f"instant_te_thresh={self.diag_instant_te_thresh}°C, "
+                  f"supply_temp_dev={self.diag_supply_temp_dev_K} K")
+        self.handles_ready = True
+        return True
+
+    # ================================================================
+    #  Helper: fault-window check
+    # ================================================================
+
+    def _in_fault_window(self, month, day, hour) -> bool:
+        fw = self.config.get('fault_window', {})
+        if not fw:
+            return False
+        return (fw['start_month'] <= month <= fw['end_month'] and
+                fw['start_day'] <= day <= fw['end_day'] and
+                fw['start_hour'] <= hour < fw['end_hour'])
+
+    # ================================================================
+    #  Callback 1: Fault injection  (begin_zone_timestep)
+    # ================================================================
+
+    def fault_injection_callback(self, state):
+        """Inject faults BEFORE the heat balance init."""
+        if api.exchange.warmup_flag(state):
+            return
+        if not self.setup_handles(state):
+            return
+
+        self._ts_counter += 1
+
+        month = api.exchange.month(state)
+        day = api.exchange.day_of_month(state)
+        hour = api.exchange.hour(state)
+        in_fault = self._in_fault_window(month, day, hour)
+
+        fault_type = self.config.get('fault_type', '')
+
+        # ---- STUCK-OPEN: zone-level thermostat bias ----
+        if fault_type == 'stuck_open':
+            if in_fault:
+                base_sp = api.exchange.get_variable_value(
+                    state, self.sched_handle)
+                bias = self.config.get('fault_bias_C', 2.0)
+
+                if self.comp_active and self.diagnosed_fault == 'stuck_open':
+                    api.exchange.set_actuator_value(
+                        state, self.fault_actuator, base_sp)
+                    if self.cooling_actuator != -1:
+                        api.exchange.set_actuator_value(
+                            state, self.cooling_actuator, base_sp + 0.5)
+                else:
+                    biased_sp = base_sp + bias
+                    api.exchange.set_actuator_value(
+                        state, self.fault_actuator, biased_sp)
+                    if self.cooling_actuator != -1:
+                        api.exchange.set_actuator_value(
+                            state, self.cooling_actuator, biased_sp + 0.5)
+            else:
+                api.exchange.reset_actuator(state, self.fault_actuator)
+                if self.cooling_actuator != -1:
+                    api.exchange.reset_actuator(state, self.cooling_actuator)
+
+        # ---- SUPPLY CURVE: system-level supply temperature bias ----
+        elif fault_type == 'supply_curve':
+            if in_fault:
+                # While compensation is active for supply_curve the fault
+                # bias must NOT go into the schedule. Fault injection and
+                # compensation share one Schedule:Compact actuator
+                # (HW-Loop-Temp-Schedule), and the setpoint manager reads it
+                # at this calling point (begin_zone_timestep), so whatever is
+                # written here is what the plant loop uses. Pre-apply the
+                # compensation setpoint so the manager picks it up.
+                if self.comp_active and self.diagnosed_fault == 'supply_curve':
+                    api.exchange.set_actuator_value(
+                        state, self.supply_temp_actuator, self.current_setpoint)
+                else:
+                    baseline = self.config.get('baseline_supply_temp_C', 60.0)
+                    bias = self.config.get('supply_curve_bias_K', -8.0)
+                    api.exchange.set_actuator_value(
+                        state, self.supply_temp_actuator, baseline + bias)
+            else:
+                # Post-fault wind-down. When in_fault is False but comp_active
+                # is still True (release window not yet expired),
+                # compensation_callback returns early for supply_curve and
+                # writes nothing. EnergyPlus schedule actuators can revert to
+                # the schedule default if not set each timestep, so
+                # current_setpoint is written here to keep the ramp-down to
+                # baseline applied through the wind-down period.
+                if self.comp_active:
+                    api.exchange.set_actuator_value(
+                        state, self.supply_temp_actuator, self.current_setpoint)
+                else:
+                    api.exchange.reset_actuator(
+                        state, self.supply_temp_actuator)
+
+        # ---- STUCK-CLOSED: handled by Erl EMS in the IDF ----
+
+    # ================================================================
+    #  Callback 2: Compensation  (inside_system_iteration_loop)
+    # ================================================================
+
+    def compensation_callback(self, state):
+        """Apply supply-temperature compensation."""
+        if api.exchange.warmup_flag(state):
+            return
+        if not self.handles_ready:
+            return
+        if not self.comp_enabled:
+            return
+
+        # --- Compute ramp once per timestep ---
+        if self._ts_counter != self._last_comp_ts:
+            self._last_comp_ts = self._ts_counter
+
+            if self.comp_active and self.diagnosed_fault is not None:
+                target = self.comp_targets.get(
+                    self.diagnosed_fault, self.baseline_supply)
+                self.current_setpoint += self.ramp_factor * (
+                    target - self.current_setpoint)
+            else:
+                self.current_setpoint += self.ramp_factor * (
+                    self.baseline_supply - self.current_setpoint)
+
+        # --- Write actuator every iteration ---
+        # For supply_curve faults the actuator is already written in
+        # fault_injection_callback at begin_zone_timestep, where the plant
+        # setpoint manager reads the schedule value. Writing it again here in
+        # the system iteration loop would be too late to have any effect, so
+        # the write is skipped; self.current_setpoint is still updated above
+        # for logging.
+        fault_type = self.config.get('fault_type', '')
+        if fault_type == 'supply_curve':
+            return  # actuator already handled in fault_injection_callback
+
+        if self.comp_active or abs(
+                self.current_setpoint - self.baseline_supply) > 0.05:
+            api.exchange.set_actuator_value(
+                state, self.comp_supply_actuator, self.current_setpoint)
+        else:
+            self.current_setpoint = self.baseline_supply
+            api.exchange.reset_actuator(state, self.comp_supply_actuator)
+
+    # ================================================================
+    #  Voting logic
+    # ================================================================
+
+    def _compute_vote(self, flags: dict) -> bool:
+        """Apply the configured voting strategy."""
+        count = flags['ocsvm'] + flags['iforest'] + flags['lof']
+        if self.voting_strategy == 'any':
+            return count >= 1
+        elif self.voting_strategy == 'consensus':
+            return count >= 3
+        else:  # 'majority' (default)
+            return count >= 2
+
+    # ================================================================
+    #  Fault diagnosis
+    # ================================================================
+
+    def _check_multi_zone_underdelivery(self, state,
+                                        threshold: float = None) -> int:
+        """Count how many extra zones show simultaneous under-delivery.
+
+        Parameters
+        ----------
+        threshold : float, optional
+            Override for the temp_error threshold (°C). If None, uses
+            self.diag_temp_error_thresh. The direct supply-temp diagnosis
+            path passes a relaxed threshold since the strong supply signal
+            reduces the need for large zone-level deviations.
+        """
+        if not self.extra_zone_handles:
+            return 0
+
+        thr = threshold if threshold is not None else self.diag_temp_error_thresh
+
+        intended_sp_other = api.exchange.get_variable_value(
+            state, self.sched_handle_no_opt) if self.sched_handle_no_opt != -1 else np.nan
+
+        zones_under = 0
+        for zone_label, zone_handles in self.extra_zone_handles.items():
+            h_zt = zone_handles.get('zone_temp', -1)
+            if h_zt == -1:
+                continue
+            z_temp = api.exchange.get_variable_value(state, h_zt)
+            if np.isnan(intended_sp_other):
+                continue
+            if (z_temp - intended_sp_other) < -thr:
+                zones_under += 1
+        return zones_under
+
+    def _diagnose_fault(self, temp_error_2h_avg: float,
+                        flow_ratio: float,
+                        temp_error_instant: float,
+                        state,
+                        t_supply: float = np.nan) -> str:
+        """Signature-based fault classification.
+
+        The stuck_open signature has a "fast path" on temp_error_instant for
+        use when the rolling average has not caught up yet. It keeps
+        compensation latency for stuck_open near 30 min instead of 100 min.
+
+        Supply curve faults often fail to move zone-level temp_error far
+        enough to cross the thresholds, because the building's thermal mass
+        absorbs the supply temp drop. The t_supply reading is a much stronger
+        signal: supply temp well below baseline, with normal flow and even
+        mild multi-zone under-delivery, is enough to call supply_curve.
+
+        Priority order:
+          1. Flow restriction  (low flow + negative temp error)
+          2. Control bias      (positive temp error + normal flow)
+             -- uses EITHER rolling avg OR instantaneous value
+          3. Supply curve -- direct path (supply temp deviation + normal
+             flow + multi-zone confirmation)
+          4. Supply curve -- legacy path (negative temp error + normal
+             flow + multi-zone under-delivery)
+          5. Unknown           (fallback -- no compensation applied)
+        """
+        te_avg = temp_error_2h_avg
+        te_inst = temp_error_instant
+        fr = flow_ratio
+        thr_te = self.diag_temp_error_thresh
+        thr_te_inst = self.diag_instant_te_thresh
+        thr_fr = self.diag_flow_ratio_low
+
+        # --- Signature 1: Flow restriction (stuck_closed) ---
+        # Both rolling avg and instantaneous should be negative
+        if fr < thr_fr and te_avg < -thr_te:
+            return 'stuck_closed'
+
+        # --- Signature 2: Control bias (stuck_open / over-delivery) ---
+        # Accept EITHER the rolling average exceeding threshold OR the
+        # instantaneous temp error exceeding a (possibly higher) threshold.
+        # The instantaneous path fires faster at fault onset.
+        avg_positive = (not np.isnan(te_avg)) and (te_avg > thr_te)
+        inst_positive = (not np.isnan(te_inst)) and (te_inst > thr_te_inst)
+
+        if (avg_positive or inst_positive) and fr >= thr_fr:
+            return 'stuck_open'
+
+        # --- Signature 3a: Supply curve -- direct supply temp path ---
+        # If supply temp is available and deviates significantly from
+        # baseline, this is the strongest signal.
+        if (not np.isnan(t_supply)) and fr >= thr_fr:
+            supply_dev = self.baseline_supply - t_supply  # positive = supply too cold
+            if supply_dev >= self.diag_supply_temp_dev_K:
+                # Strong-signal bypass: if deviation is >= 2x threshold,
+                # the supply fault is unambiguous -- skip zone confirmation
+                # entirely. This eliminates latency caused by zones still
+                # being at setpoint during morning warmup.
+                if supply_dev >= 2.0 * self.diag_supply_temp_dev_K:
+                    return 'supply_curve'
+                # Moderate signal: require at least 1 zone below setpoint
+                # (relaxed threshold=0.0) as confirmation.
+                n_zones_under = self._check_multi_zone_underdelivery(
+                    state, threshold=0.0)
+                min_zones = max(1, self.diag_multi_zone_count - 1)
+                if n_zones_under >= min_zones:
+                    return 'supply_curve'
+
+        # --- Signature 3b: Supply curve -- legacy temp_error path ---
+        if te_avg < -thr_te and fr >= thr_fr:
+            n_zones_under = self._check_multi_zone_underdelivery(state)
+            if n_zones_under >= self.diag_multi_zone_count:
+                return 'supply_curve'
+            else:
+                return 'unknown'
+
+        return 'unknown'
+
+    # ================================================================
+    #  Callback 3: Logging + ML inference + voting + diagnosis
+    # ================================================================
+
+    def logging_callback(self, state):
+        """Read sensors, compute features, run ML inference, apply voting
+        and persistence logic, diagnose fault type, and log everything."""
+        if api.exchange.warmup_flag(state):
+            return
+        if not self.setup_handles(state):
+            return
+
+        self.timestep_idx += 1
+
+        # ---- Read raw sensors (primary zone) ----
+        s = {key: api.exchange.get_variable_value(state, h)
+             for key, h in self.handles.items()}
+        intended_sp = api.exchange.get_variable_value(
+            state, self.sched_handle)
+        intended_sp_no_opt = api.exchange.get_variable_value(
+            state, self.sched_handle_no_opt) \
+            if self.sched_handle_no_opt != -1 else np.nan
+
+        month = api.exchange.month(state)
+        day = api.exchange.day_of_month(state)
+        hour = api.exchange.hour(state)
+        minute = api.exchange.minutes(state)
+
+        in_fault = 1 if self._in_fault_window(month, day, hour) else 0
+
+        # ---- Feature engineering (same as Phase 4) ----
+        zone_temp = s['zone_temp']
+        m_dot = s['m_dot']
+        temp_error = zone_temp - intended_sp
+        flow_ratio = (m_dot / self.peak_flow) if self.peak_flow > 0 else 0.0
+        delta_T_hw = s['t_inlet'] - s['t_outlet']
+
+        occupied = 1 if intended_sp >= self.occupied_threshold else 0
+        heating_active = 1 if m_dot > self.min_flow else 0
+
+        # Buffer flush on daily startup
+        is_active_now = (occupied == 1 and heating_active == 1)
+        if is_active_now and not self.was_active_last_step:
+            self.temp_error_buffer.clear()
+            self.prev_zone_temp = None
+        self.was_active_last_step = is_active_now
+
+        if is_active_now:
+            self.temp_error_buffer.append(temp_error)
+            dT_zone_dt = (zone_temp - self.prev_zone_temp
+                          if self.prev_zone_temp is not None else np.nan)
+            self.prev_zone_temp = zone_temp
+        else:
+            dT_zone_dt = np.nan
+            self.prev_zone_temp = None
+
+        temp_error_2h_avg = (
+            np.mean(self.temp_error_buffer)
+            if len(self.temp_error_buffer) >= self.roll_window else np.nan)
+
+        feature_ready = 1 if (
+            len(self.temp_error_buffer) >= self.roll_window
+            and self.prev_zone_temp is not None
+            and not np.isnan(dT_zone_dt)) else 0
+
+        # Store for diagnosis (instantaneous value always available)
+        self._latest_temp_error_instant = temp_error
+        self._latest_temp_error_2h_avg = temp_error_2h_avg
+        self._latest_flow_ratio = flow_ratio
+
+        # ---- ML inference ----
+        scores = {'ocsvm': np.nan, 'iforest': np.nan, 'lof': np.nan}
+        flags = {'ocsvm': 0, 'iforest': 0, 'lof': 0}
+
+        if feature_ready and is_active_now:
+            X_raw = np.array([[temp_error, flow_ratio, temp_error_2h_avg,
+                               dT_zone_dt, s['t_outdoor'], delta_T_hw]])
+            X_scaled = self.scaler.transform(X_raw)
+
+            scores['ocsvm'] = float(
+                self.models['ocsvm'].decision_function(X_scaled)[0])
+            scores['iforest'] = float(
+                self.models['iforest'].score_samples(X_scaled)[0])
+            scores['lof'] = float(
+                self.models['lof'].score_samples(X_scaled)[0])
+
+            thresh_key = self.config.get('threshold_key', 'default')
+            for mname in ['ocsvm', 'iforest', 'lof']:
+                if scores[mname] < self.thresholds[mname][thresh_key]:
+                    flags[mname] = 1
+
+        # ---- Voting ----
+        vote_count = flags['ocsvm'] + flags['iforest'] + flags['lof']
+        # If detection_model is set, use only that model's flag.
+        if self.detection_model and self.detection_model in flags:
+            vote_triggered = bool(flags[self.detection_model]) if (
+                feature_ready and is_active_now) else False
+        else:
+            vote_triggered = self._compute_vote(flags) if (
+                feature_ready and is_active_now) else False
+
+        # ---- Persistence filter + state machine ----
+        if vote_triggered:
+            self.detect_streak += 1
+            self.clear_streak = 0
+        else:
+            self.clear_streak += 1
+            self.detect_streak = 0
+            self.unknown_streak = 0
+
+        # Activation: sustained detection triggers compensation
+        if (self.comp_enabled and not self.comp_active
+                and self.detect_streak >= self.persistence_steps):
+
+            # Run diagnosis
+            candidate_fault = self._diagnose_fault(
+                temp_error_2h_avg, flow_ratio, temp_error, state,
+                t_supply=s.get('t_supply', np.nan))
+
+            if candidate_fault == 'unknown':
+                self.n_unknown_total += 1
+                self.unknown_streak += 1
+
+                # After unknown_max_retries consecutive unknown diagnoses,
+                # hard-reset the detection streak to stop the retry loop.
+                # The ensemble is triggering on something that matches no
+                # known signature -- retrying every 3 steps is pure noise.
+                if self.unknown_streak >= self.unknown_max_retries:
+                    self.detect_streak = 0
+                    self.unknown_streak = 0
+                    # Log at reduced frequency to avoid spam
+                    if self.n_unknown_total <= 10 or self.n_unknown_total % 50 == 0:
+                        print(f"  [{self.timestep_idx}] Unknown diagnosis x "
+                              f"{self.unknown_max_retries} -> streak reset "
+                              f"(total unknowns: {self.n_unknown_total})")
+                # else: keep detect_streak alive -- the next timestep's
+                # vote will increment it to persistence_steps again and
+                # re-attempt diagnosis with updated sensor values.
+
+            else:
+                # Valid diagnosis -> activate compensation
+                self.comp_active = True
+                self.diagnosed_fault = candidate_fault
+                self.unknown_streak = 0
+                self.n_compensation_activations += 1
+
+                # Track false activations (outside fault window)
+                if in_fault == 0:
+                    self.n_false_comp_activations += 1
+
+                self._latest_temp_error_2h_avg = temp_error_2h_avg
+                self._latest_flow_ratio = flow_ratio
+
+                target_val = self.comp_targets.get(self.diagnosed_fault, '--')
+                t_supply_val = s.get('t_supply', np.nan)
+                supply_info = (f"  t_supply={t_supply_val:.1f}"
+                               if not np.isnan(t_supply_val) else "")
+                print(f"  [{self.timestep_idx}] COMPENSATION ACTIVATED  "
+                      f"diagnosed={self.diagnosed_fault}  "
+                      f"target={target_val} °C  "
+                      f"te_inst={temp_error:+.3f}  "
+                      f"te_2h={temp_error_2h_avg:+.3f}  "
+                      f"fr={flow_ratio:.3f}"
+                      f"{supply_info}")
+
+        # Deactivation: sustained non-detection releases compensation
+        # Use per-fault-type release steps if configured, else default.
+        effective_release = self.release_steps_override.get(
+            self.diagnosed_fault, self.release_steps) if self.diagnosed_fault else self.release_steps
+
+        # Physical guard for supply_curve. t_supply cannot be used here:
+        # it reflects the COMPENSATED value while comp_active=True, so the
+        # guard would always pass exactly when it matters. in_fault is the
+        # authoritative signal instead -- supply_curve compensation is never
+        # released inside the fault window, and once in_fault==0 the normal
+        # clear_streak release logic resumes.
+        supply_recovered = True
+        if self.diagnosed_fault == 'supply_curve':
+            supply_recovered = (in_fault == 0)
+
+        if (self.comp_active
+                and self.clear_streak >= effective_release
+                and supply_recovered):
+            print(f"  [{self.timestep_idx}] COMPENSATION RELEASED  "
+                  f"(was: {self.diagnosed_fault})")
+            self.comp_active = False
+            self.diagnosed_fault = None
+
+        # ---- Build log row ----
+        row = {
+            'timestep': self.timestep_idx,
+            'month': month, 'day': day, 'hour': hour, 'minute': minute,
+            'zone_temp': zone_temp, 'htg_sp': s['htg_sp'],
+            'intended_sp': intended_sp, 'm_dot': m_dot,
+            't_inlet': s['t_inlet'], 't_outlet': s['t_outlet'],
+            't_outdoor': s['t_outdoor'],
+            'in_fault': in_fault,
+            'temp_error': temp_error, 'flow_ratio': flow_ratio,
+            'temp_error_2h_avg': temp_error_2h_avg,
+            'dT_zone_dt': dT_zone_dt, 'delta_T_hw': delta_T_hw,
+            'occupied': occupied, 'heating_active': heating_active,
+            'feature_ready': feature_ready,
+            # Per-model scores and flags
+            'score_ocsvm': scores['ocsvm'],
+            'score_iforest': scores['iforest'],
+            'score_lof': scores['lof'],
+            'flag_ocsvm': flags['ocsvm'],
+            'flag_iforest': flags['iforest'],
+            'flag_lof': flags['lof'],
+            # Voting and compensation columns
+            'vote_count': vote_count,
+            'vote_triggered': int(vote_triggered),
+            'detect_streak': self.detect_streak,
+            'clear_streak': self.clear_streak,
+            'unknown_streak': self.unknown_streak,
+            'comp_active': int(self.comp_active),
+            'diagnosed_fault': self.diagnosed_fault or '',
+            'supply_temp_cmd': self.current_setpoint,
+        }
+
+        # Supply temperature sensor (if available)
+        if 't_supply' in self.handles:
+            row['t_supply'] = s.get('t_supply', np.nan)
+
+        # Extra zone sensors
+        for zone_label, zone_handles in self.extra_zone_handles.items():
+            for key, h in zone_handles.items():
+                col_name = f"{zone_label}_{key}"
+                if h != -1:
+                    row[col_name] = api.exchange.get_variable_value(state, h)
+                else:
+                    row[col_name] = np.nan
+            row[f"{zone_label}_intended_sp"] = intended_sp_no_opt
+
+        self.log_rows.append(row)
+
+    # ================================================================
+    #  Save
+    # ================================================================
+
+    def save(self, run_dir: str) -> pd.DataFrame:
+        df = pd.DataFrame(self.log_rows)
+        csv_path = Path(run_dir) / "fdc_runtime_log.csv"
+        df.to_csv(csv_path, index=False)
+        print(f"\nRuntime log saved: {csv_path}")
+        print(f"  Total unknown diagnoses: {self.n_unknown_total}")
+        print(f"  Total compensation activations: {self.n_compensation_activations}")
+        print(f"  False compensation activations (outside fault window): "
+              f"{self.n_false_comp_activations}")
+        return df
+
+
+# ====================================================================
+#  Post-run validation
+# ====================================================================
+
+def validate_results(df: pd.DataFrame, training_cfg: dict, config: dict):
+    """Extended validation with compensation effectiveness metrics."""
+    print("\n" + "=" * 65)
+    print("VALIDATION CHECKS")
+    print("=" * 65)
+    print(f"1. Total timesteps logged: {len(df):,}")
+    if len(df) == 0:
+        return
+
+    roll_window = training_cfg['rolling_window_steps']
+    early = df.head(roll_window + 2)
+    print(f"2. Warm-up check: feature_ready==0 in first {roll_window + 2} "
+          f"rows: {(early['feature_ready'] == 0).sum()} "
+          f"(expected ~{roll_window})")
+
+    gated = df[(df['occupied'] == 1) & (df['heating_active'] == 1)
+               & (df['feature_ready'] == 1)]
+    print(f"\n3. Gated population: {len(gated):,} rows")
+    if len(gated) == 0:
+        print("   WARNING: No gated rows found!")
+        return
+
+    print(f"\n4. Flagged rates (threshold='"
+          f"{config.get('threshold_key', 'default')}'):")
+    for m in ['ocsvm', 'iforest', 'lof']:
+        print(f"   {m:12s}: {gated[f'flag_{m}'].mean():>6.2%}  "
+              f"(n={int(gated[f'flag_{m}'].sum())})")
+
+    # ---- Voting summary ----
+    print(f"\n5. Voting summary ({config.get('voting_strategy', 'majority')}):")
+    print(f"   Vote triggered rate: {gated['vote_triggered'].mean():>6.2%}")
+
+    # Unknown-diagnosis statistics
+    if 'unknown_streak' in df.columns:
+        max_unk = df['unknown_streak'].max()
+        print(f"   Max unknown_streak observed: {max_unk}")
+
+    # ---- Fault-window analysis ----
+    if 'in_fault' in df.columns:
+        fault_rows = gated[gated['in_fault'] == 1]
+        normal_rows = gated[gated['in_fault'] == 0]
+
+        print(f"\n6. Fault window analysis:")
+        print(f"   Fault-active gated rows:  {len(fault_rows):,}")
+        print(f"   Normal gated rows:        {len(normal_rows):,}")
+
+        if len(fault_rows) > 0:
+            print(f"\n   During fault window (primary zone):")
+            print(f"     Avg zone temp:       "
+                  f"{fault_rows['zone_temp'].mean():.2f} °C")
+            print(f"     Avg intended SP:     "
+                  f"{fault_rows['intended_sp'].mean():.2f} °C")
+            print(f"     Avg temp_error:      "
+                  f"{fault_rows['temp_error'].mean():.3f} °C")
+            print(f"     Avg flow rate:       "
+                  f"{fault_rows['m_dot'].mean():.4f} kg/s")
+            if 't_supply' in fault_rows.columns:
+                print(f"     Avg supply temp:     "
+                      f"{fault_rows['t_supply'].mean():.2f} °C")
+            print(f"     Avg delta_T_hw:      "
+                  f"{fault_rows['delta_T_hw'].mean():.2f} °C")
+
+            print(f"\n   Detection rates during fault window:")
+            for m in ['ocsvm', 'iforest', 'lof']:
+                recall = fault_rows[f'flag_{m}'].mean()
+                print(f"     {m:12s}: {recall:>6.2%}  "
+                      f"({int(fault_rows[f'flag_{m}'].sum())}"
+                      f"/{len(fault_rows)})")
+            print(f"     {'vote':12s}: "
+                  f"{fault_rows['vote_triggered'].mean():>6.2%}  "
+                  f"({int(fault_rows['vote_triggered'].sum())}"
+                  f"/{len(fault_rows)})")
+
+            # Detection latency
+            first_detect = fault_rows[
+                fault_rows['vote_triggered'] == 1].head(1)
+            if len(first_detect) > 0:
+                first_fault_ts = fault_rows['timestep'].iloc[0]
+                first_det_ts = first_detect['timestep'].iloc[0]
+                latency_steps = first_det_ts - first_fault_ts
+                print(f"\n   Detection latency:     {latency_steps} steps "
+                      f"({latency_steps * 10} min)")
+
+            # Extra zone impact
+            extra_zones = config.get('extra_zone_sensors', {})
+            if extra_zones:
+                print(f"\n   Multi-zone impact during fault window:")
+                for zone_label in extra_zones:
+                    zt_col = f"{zone_label}_zone_temp"
+                    sp_col = f"{zone_label}_intended_sp"
+                    md_col = f"{zone_label}_m_dot"
+                    if zt_col in fault_rows.columns:
+                        z_temp = fault_rows[zt_col].mean()
+                        z_sp = (fault_rows[sp_col].mean()
+                                if sp_col in fault_rows.columns else np.nan)
+                        z_flow = (fault_rows[md_col].mean()
+                                  if md_col in fault_rows.columns else np.nan)
+                        z_err = z_temp - z_sp if not np.isnan(z_sp) else np.nan
+                        print(f"     {zone_label:20s}:  Tavg={z_temp:.2f}°C  "
+                              f"SP={z_sp:.2f}°C  err={z_err:+.2f}°C  "
+                              f"mdot={z_flow:.4f} kg/s")
+
+        if len(normal_rows) > 0:
+            print(f"\n   False positive rates (normal periods):")
+            for m in ['ocsvm', 'iforest', 'lof']:
+                fpr = normal_rows[f'flag_{m}'].mean()
+                print(f"     {m:12s}: {fpr:>6.2%}  "
+                      f"({int(normal_rows[f'flag_{m}'].sum())}"
+                      f"/{len(normal_rows)})")
+            print(f"     {'vote':12s}: "
+                  f"{normal_rows['vote_triggered'].mean():>6.2%}")
+
+            # False compensation activations
+            if 'comp_active' in normal_rows.columns:
+                false_comp_rows = normal_rows[normal_rows['comp_active'] == 1]
+                if len(false_comp_rows) > 0:
+                    print("\n   False compensation (normal period, comp_active=1):")
+                    print(f"     Steps: {len(false_comp_rows):,}")
+                    print(f"     Diagnosed as: "
+                          f"{false_comp_rows['diagnosed_fault'].value_counts().to_dict()}")
+
+    # ---- Compensation effectiveness ----
+    comp_enabled = config.get('compensation_enabled', False)
+    if comp_enabled and 'comp_active' in df.columns:
+        print(f"\n7. Compensation effectiveness:")
+        comp_rows = df[df['comp_active'] == 1]
+        print(f"   Timesteps with comp active: {len(comp_rows):,}")
+        if len(comp_rows) > 0:
+            diag_dist = comp_rows['diagnosed_fault'].value_counts().to_dict()
+            print(f"   Diagnosed fault distribution: {diag_dist}")
+            print(f"   Avg supply cmd:    "
+                  f"{comp_rows['supply_temp_cmd'].mean():.2f} °C")
+            print(f"   Avg zone temp:     "
+                  f"{comp_rows['zone_temp'].mean():.2f} °C")
+            print(f"   Avg temp_error:    "
+                  f"{comp_rows['temp_error'].mean():.3f} °C")
+
+            # Compensation activation latency
+            if 'in_fault' in df.columns:
+                fault_window_rows = df[df['in_fault'] == 1]
+                fault_window_gated = gated[gated['in_fault'] == 1]
+                comp_start_in_window = fault_window_rows[
+                    fault_window_rows['comp_active'] == 1]
+
+                if len(fault_window_rows) > 0 and len(comp_start_in_window) > 0:
+                    first_fault_ts = fault_window_rows['timestep'].iloc[0]
+                    first_comp_ts = comp_start_in_window['timestep'].iloc[0]
+                    lat_raw = first_comp_ts - first_fault_ts
+
+                    # Operational latency: from first GATED fault row
+                    # (occupied + heating active + features ready).
+                    # The raw latency is misleading for faults that span
+                    # unoccupied hours (e.g. overnight supply_curve faults)
+                    # because no detection runs when the building is empty.
+                    if len(fault_window_gated) > 0:
+                        first_gated_ts = fault_window_gated['timestep'].iloc[0]
+                        lat_operational = first_comp_ts - first_gated_ts
+                        print(f"   Comp activation latency (raw, from fault start): "
+                              f"{lat_raw} steps ({lat_raw * 10} min)")
+                        print(f"   Comp activation latency (operational, from first gated): "
+                              f"{lat_operational} steps ({lat_operational * 10} min)")
+                    else:
+                        print(f"   Comp activation latency (raw): "
+                              f"{lat_raw} steps ({lat_raw * 10} min)")
+                        print("   Comp activation latency (operational): "
+                              "No gated rows in fault window.")
+                elif len(fault_window_rows) > 0:
+                    print("   Comp activation latency: "
+                          "Never activated during fault window.")
+
+            # Before vs after compensation
+            if 'in_fault' in df.columns:
+                fault_gated = gated[gated['in_fault'] == 1]
+                pre_comp = fault_gated[fault_gated['comp_active'] == 0]
+                post_comp = fault_gated[fault_gated['comp_active'] == 1]
+                if len(pre_comp) > 0 and len(post_comp) > 0:
+                    print(f"\n   Fault window — before compensation:")
+                    print(f"     Avg zone temp:   "
+                          f"{pre_comp['zone_temp'].mean():.2f} °C  "
+                          f"({len(pre_comp)} steps)")
+                    print(f"   Fault window — after compensation:")
+                    print(f"     Avg zone temp:   "
+                          f"{post_comp['zone_temp'].mean():.2f} °C  "
+                          f"({len(post_comp)} steps)")
+                    recovery = (post_comp['zone_temp'].mean()
+                                - pre_comp['zone_temp'].mean())
+                    print(f"   Recovery:          {recovery:+.2f} °C")
+
+        # True performance: fault window + comp active
+        if 'in_fault' in df.columns:
+            fault_comp = gated[(gated['in_fault'] == 1) &
+                               (gated['comp_active'] == 1)]
+
+            if len(fault_comp) > 0:
+                print(f"\n   Fault window + comp active ONLY "
+                      f"(The True Performance):")
+                print(f"     Avg zone temp:   "
+                      f"{fault_comp['zone_temp'].mean():.2f} °C")
+                print(f"     Avg temp_error:  "
+                      f"{fault_comp['temp_error'].mean():.3f} °C")
+                print(f"     Avg supply cmd:  "
+                      f"{fault_comp['supply_temp_cmd'].mean():.2f} °C")
+
+                pre_comp = gated[(gated['in_fault'] == 1) &
+                                 (gated['comp_active'] == 0)]
+                if len(pre_comp) > 0:
+                    recovery_filtered = (fault_comp['zone_temp'].mean()
+                                         - pre_comp['zone_temp'].mean())
+                    print(f"     True Recovery:   "
+                          f"{recovery_filtered:+.2f} °C")
+
+
+# ====================================================================
+#  Main entry point
+# ====================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Phase 5: ML Detection + Diagnosis + Compensation"
+    )
+    parser.add_argument("config", help="Path to run config JSON")
+    args = parser.parse_args()
+
+    with open(args.config, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    run_dir = Path(config['output_root']) / \
+        f"{timestamp}_{config['run_name']}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(args.config, run_dir / Path(args.config).name)
+
+    # ---- Load ML artifacts ----
+    mdir = Path(config['models_dir'])
+    with open(mdir / "training_config.json", encoding='utf-8') as f:
+        training_cfg = json.load(f)
+    models = {
+        'ocsvm': joblib.load(mdir / "ocsvm.joblib"),
+        'iforest': joblib.load(mdir / "iforest.joblib"),
+        'lof': joblib.load(mdir / "lof.joblib"),
+    }
+    scaler = joblib.load(mdir / "scaler.joblib")
+    thresholds = joblib.load(mdir / "thresholds.joblib")
+
+    # ---- Initialise EnergyPlus ----
+    global api
+    api = EnergyPlusAPI()
+    state = api.state_manager.new_state()
+
+    # Request primary zone variables
+    for key, (vtype, vname) in config['var_mapping'].items():
+        api.exchange.request_variable(state, vtype, vname)
+
+    api.exchange.request_variable(
+        state, "Schedule Value", "HTGSETP_SCH_YES_OPTIMUM")
+    api.exchange.request_variable(
+        state, "Schedule Value", "HTGSETP_SCH_NO_OPTIMUM")
+
+    # Request extra zone variables
+    for zone_label, zone_vm in config.get('extra_zone_sensors', {}).items():
+        for key, (vtype, vname) in zone_vm.items():
+            api.exchange.request_variable(state, vtype, vname)
+
+    # ---- Create controller ----
+    ctrl = FaultCompensationController(
+        config, models, scaler, thresholds, training_cfg)
+
+    # ---- Register callbacks ----
+    api.runtime.callback_begin_zone_timestep_before_init_heat_balance(
+        state, ctrl.fault_injection_callback)
+
+    if config.get('compensation_enabled', False):
+        api.runtime.callback_inside_system_iteration_loop(
+            state, ctrl.compensation_callback)
+
+    api.runtime.callback_end_zone_timestep_after_zone_reporting(
+        state, ctrl.logging_callback)
+
+    # ---- Run simulation ----
+    exit_code = api.runtime.run_energyplus(state, [
+        "-w", str(config['epw_path']),
+        "-d", str(run_dir),
+        str(config['idf_path'])
+    ])
+
+    print(f"\nEnergyPlus exit code: {exit_code}")
+    df = ctrl.save(run_dir)
+    validate_results(df, training_cfg, config)
+
+
+if __name__ == "__main__":
+    main()

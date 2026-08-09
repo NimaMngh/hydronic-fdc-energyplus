@@ -1,0 +1,14 @@
+\begin{table}[htbp]
+  \centering
+  \caption{Best detection configuration per fault type.}
+  \label{tab:detection_best}
+  \begin{tabular}{lrrrrrrrrr}
+    \toprule
+    Fault & Model & Thr. & Pers. & Prec. & Rec. & F1 & FPR & BL-FPR & Lat. [min] \\
+    \midrule
+    stuck\_closed & majority\_vote & p1 & 3 & 0.818 & 1.000 & 0.900 & 0.0018 & 0.0018 & 20 \\
+    stuck\_open & majority\_vote & p1 & 4 & 0.805 & 0.917 & 0.857 & 0.0018 & 0.0018 & 100 \\
+    supply\_curve & lof & p1 & 6 & 0.356 & 0.981 & 0.522 & 0.0214 & 0.0222 & 550 \\
+    \bottomrule
+  \end{tabular}
+\end{table}

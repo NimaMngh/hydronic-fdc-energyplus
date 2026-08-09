@@ -1,0 +1,21 @@
+name: FDC
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy=2.4.2
+  - pandas=3.0.0
+  - scipy=1.17.0
+  - scikit-learn=1.8.0
+  - joblib=1.5.3
+  - matplotlib=3.10.8
+
+# The EnergyPlus Python API (pyenergyplus) is NOT installable from
+# conda or PyPI. It ships with the EnergyPlus installation itself.
+# This project was run against EnergyPlus 25.1.0. Install EnergyPlus
+# separately and make sure its Python API directory is importable.
+
+# scikit-learn is pinned deliberately. The trained detectors in models/
+# are joblib pickles and will emit InconsistentVersionWarning, or
+# potentially misbehave, if loaded under a different minor version.

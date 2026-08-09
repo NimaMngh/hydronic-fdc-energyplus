@@ -1,0 +1,65 @@
+{
+  "run_name": "stuckopen_comp",
+  "idf_path": "RetailStandalone_stuckopen_comp.idf",
+  "epw_path": "Vasteras2007_2021.epw",
+  "models_dir": "models",
+  "output_root": "runs",
+  "zone_name": "Core_Retail",
+  "threshold_key": "p1",
+  "log_every_n_steps": 1,
+  "fault_type": "stuck_open",
+  "fault_bias_C": 2.0,
+  "fault_window": {
+    "start_month": 1,
+    "start_day": 15,
+    "end_month": 1,
+    "end_day": 16,
+    "start_hour": 8,
+    "end_hour": 17
+  },
+  "var_mapping": {
+    "zone_temp": [
+      "Zone Mean Air Temperature",
+      "Core_Retail"
+    ],
+    "htg_sp": [
+      "Zone Thermostat Heating Setpoint Temperature",
+      "Core_Retail"
+    ],
+    "m_dot": [
+      "System Node Mass Flow Rate",
+      "Core_Retail HW Inlet Node"
+    ],
+    "t_inlet": [
+      "System Node Temperature",
+      "Core_Retail HW Inlet Node"
+    ],
+    "t_outlet": [
+      "System Node Temperature",
+      "Core_Retail HW Outlet Node"
+    ],
+    "t_outdoor": [
+      "Site Outdoor Air Drybulb Temperature",
+      "Environment"
+    ]
+  },
+  "compensation_enabled": true,
+  "voting_strategy": "majority",
+  "persistence_steps": 4,
+  "release_steps": 6,
+  "compensation_config": {
+    "baseline_supply_temp_C": 60.0,
+    "ramp_factor": 0.2,
+    "targets": {
+      "stuck_closed": 70.0,
+      "stuck_open": 50.0,
+      "supply_curve": 70.0
+    }
+  },
+  "diagnosis_config": {
+    "flow_ratio_low": 0.6,
+    "temp_error_thresh_C": 0.3,
+    "multi_zone_count": 2
+  },
+  "idf_notes": "Copied from RetailStandalone_baseline.idf. The stuck-open fault is injected entirely via the Python API (thermostat bias actuator), so no ERL modifications were needed. The EMS:Actuator declaration for Act_HWLoop_SPM_Schedule must be verified as absent so the Python API retains ownership of the HW-Loop-Temp-Schedule for supply temperature compensation."
+}

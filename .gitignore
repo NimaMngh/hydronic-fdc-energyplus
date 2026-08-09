@@ -1,0 +1,81 @@
+# ---------------------------------------------------------------------------
+#  hydronic-fdc-energyplus
+#  Must be in place BEFORE the first commit: anything committed once stays in
+#  git history even after deletion.
+# ---------------------------------------------------------------------------
+
+# --- manuscript figures (kept locally, not published) -----------------------
+figures/
+
+# --- EnergyPlus raw output (regenerable from the IDF + config) --------------
+runs/**
+!runs/.gitkeep
+severity/runs/**
+!severity/runs/.gitkeep
+*.eso
+*.mtr
+*.mtd
+*.mdd
+*.rdd
+*.edd
+*.eio
+*.shd
+*.dxf
+*.audit
+*.bnd
+*.end
+*.err
+eplustbl.htm
+eplustbl.csv
+epluszsz.csv
+sqlite.err
+
+# Runtime logs are ~7 MB each; these belong in the Zenodo data record.
+fdc_runtime_log.csv
+
+# --- working directories not for publication -------------------------------
+_archive/
+_backup_*/
+runs_superseded/
+*.bak
+*.bak_*
+*.idf.bak*
+*.json.bak*
+*.py.bak*
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+
+# --- LaTeX -----------------------------------------------------------------
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.spl
+*.toc
+
+# --- editors, OS, Windows --------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+~$*
+Directory
+*.lnk

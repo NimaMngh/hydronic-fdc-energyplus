@@ -1,0 +1,107 @@
+{
+  "generated_by": "Phase9a_severity_detection_sweep.py",
+  "generated_at": "2026-08-08T21:16:03Z",
+  "n_rows_detection": 15,
+  "fault_types": [
+    "stuck_closed",
+    "stuck_open",
+    "supply_curve"
+  ],
+  "severity_tags": [
+    {
+      "fault_type": "stuck_closed",
+      "severity_tag": "sc_s10",
+      "severity_value": 0.1
+    },
+    {
+      "fault_type": "stuck_closed",
+      "severity_tag": "sc_s20",
+      "severity_value": 0.2
+    },
+    {
+      "fault_type": "stuck_closed",
+      "severity_tag": "sc_s30",
+      "severity_value": 0.3
+    },
+    {
+      "fault_type": "stuck_closed",
+      "severity_tag": "sc_s50",
+      "severity_value": 0.5
+    },
+    {
+      "fault_type": "stuck_closed",
+      "severity_tag": "sc_s70",
+      "severity_value": 0.7
+    },
+    {
+      "fault_type": "stuck_open",
+      "severity_tag": "so_b05",
+      "severity_value": 0.5
+    },
+    {
+      "fault_type": "stuck_open",
+      "severity_tag": "so_b10",
+      "severity_value": 1.0
+    },
+    {
+      "fault_type": "stuck_open",
+      "severity_tag": "so_b20",
+      "severity_value": 2.0
+    },
+    {
+      "fault_type": "stuck_open",
+      "severity_tag": "so_b40",
+      "severity_value": 4.0
+    },
+    {
+      "fault_type": "stuck_open",
+      "severity_tag": "so_b60",
+      "severity_value": 6.0
+    },
+    {
+      "fault_type": "supply_curve",
+      "severity_tag": "scu_k02",
+      "severity_value": 2.0
+    },
+    {
+      "fault_type": "supply_curve",
+      "severity_tag": "scu_k05",
+      "severity_value": 5.0
+    },
+    {
+      "fault_type": "supply_curve",
+      "severity_tag": "scu_k08",
+      "severity_value": 8.0
+    },
+    {
+      "fault_type": "supply_curve",
+      "severity_tag": "scu_k12",
+      "severity_value": 12.0
+    },
+    {
+      "fault_type": "supply_curve",
+      "severity_tag": "scu_k15",
+      "severity_value": 15.0
+    }
+  ],
+  "best_configs_used": {
+    "stuck_closed": {
+      "file": "plots\\fault_analysis_stuckclosed\\best_config_stuckclosed.json",
+      "model": "majority_vote",
+      "threshold_key": "p1",
+      "persistence": 3
+    },
+    "stuck_open": {
+      "file": "plots\\fault_analysis_stuckopen\\best_config_stuckopen.json",
+      "model": "majority_vote",
+      "threshold_key": "p1",
+      "persistence": 4
+    },
+    "supply_curve": {
+      "file": "plots\\fault_analysis_supplycurve\\best_config_supplycurve.json",
+      "model": "lof",
+      "threshold_key": "p1",
+      "persistence": 6
+    }
+  }
+}

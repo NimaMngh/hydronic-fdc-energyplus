@@ -1,0 +1,135 @@
+{
+  "generated_by": "Phase9d_diagnostic_report.py",
+  "generated_at": "2026-08-08T21:16:26Z",
+  "source_metadata": "2026-08-08T21:16:03Z",
+  "n_rows_detection": 15,
+  "n_rows_compensation": 15,
+  "checks": {
+    "paradox": {
+      "check": "paradox_f1_zero_but_recovery_positive",
+      "n_flags": 0,
+      "flags": []
+    },
+    "nonmonotonic_recovery": {
+      "check": "nonmonotonic_ddh_recovery_stuck_closed",
+      "n_inversions": 1,
+      "peak_recovery_tag": "sc_s20",
+      "peak_recovery_value": 0.2,
+      "peak_recovery_pct": 42.09532831073884,
+      "inversions": [
+        {
+          "inversion_at_tag": "sc_s10",
+          "severity_value": 0.1,
+          "ddh_recovery_here": 19.301241163877524,
+          "ddh_recovery_prev": 42.09532831073884,
+          "delta_pct": -22.79
+        }
+      ],
+      "interpretation": "Non-monotonic DDH recovery in stuck-closed faults indicates that the compensation actuator is constrained at very low flow fractions (phi \u2264 0.10). The peak recovery at sc_s20 (phi=0.20) and collapse at sc_s10 (phi=0.10) imply a practical compensation floor: below ~20 % rated flow the supply-temperature ramp cannot compensate for the thermal deficit within the fault window. Recommend citing phi=0.20 as the 'compensation effectiveness threshold'."
+    },
+    "supply_curve_f1_trend": {
+      "check": "supply_curve_f1_peak_not_at_max_severity",
+      "peak_f1_tag": "scu_k05",
+      "peak_f1_value": 5.0,
+      "peak_f1_score": 0.5268456375838926,
+      "max_severity_tag": "scu_k15",
+      "max_severity_value": 15.0,
+      "f1_at_max_severity": 0.486206896551724,
+      "counter_intuitive": true,
+      "interpretation": "F1 peaks at a moderate supply-curve bias and *declines* at larger biases.  Probable mechanism: at very large OAT sensor errors the heating demand is suppressed uniformly across all zones, shifting temperature residuals away from the anomaly detector's learned normal distribution toward a new 'cold' regime that the fixed threshold cannot distinguish from fault-free cold-weather operation. Implication: the current threshold-based detector has a sweet spot at moderate biases; re-training with bias-inclusive data or using a bias-aware feature (OAT vs. supply-temp correlation) would extend detection to high-severity levels."
+    },
+    "saturation_plateaus": {
+      "check": "detection_saturation_plateaus",
+      "by_fault_type": {
+        "stuck_closed": {
+          "n_plateau_bands": 3,
+          "plateau_details": [
+            {
+              "metric": "f1",
+              "sev_start": 0.2,
+              "sev_end": 0.3,
+              "value": 0.9,
+              "severity_tags": [
+                "sc_s20",
+                "sc_s30"
+              ],
+              "n_levels": 2
+            },
+            {
+              "metric": "precision",
+              "sev_start": 0.2,
+              "sev_end": 0.3,
+              "value": 0.818182,
+              "severity_tags": [
+                "sc_s20",
+                "sc_s30"
+              ],
+              "n_levels": 2
+            },
+            {
+              "metric": "recall",
+              "sev_start": 0.1,
+              "sev_end": 0.3,
+              "value": 1.0,
+              "severity_tags": [
+                "sc_s10",
+                "sc_s20",
+                "sc_s30"
+              ],
+              "n_levels": 3
+            }
+          ],
+          "interpretation": "Detection saturates across 3 severity band(s) for stuck closed faults. This indicates the current model/threshold/persistence combination cannot differentiate these severity levels \u2014 the detector reaches its performance ceiling. For publication: report the saturation band as the 'detection-equivalent range' and note it in the limitations section."
+        },
+        "stuck_open": {
+          "n_plateau_bands": 3,
+          "plateau_details": [
+            {
+              "metric": "f1",
+              "sev_start": 2.0,
+              "sev_end": 6.0,
+              "value": 0.857143,
+              "severity_tags": [
+                "so_b20",
+                "so_b40",
+                "so_b60"
+              ],
+              "n_levels": 3
+            },
+            {
+              "metric": "precision",
+              "sev_start": 2.0,
+              "sev_end": 6.0,
+              "value": 0.804878,
+              "severity_tags": [
+                "so_b20",
+                "so_b40",
+                "so_b60"
+              ],
+              "n_levels": 3
+            },
+            {
+              "metric": "recall",
+              "sev_start": 1.0,
+              "sev_end": 6.0,
+              "value": 0.916667,
+              "severity_tags": [
+                "so_b10",
+                "so_b20",
+                "so_b40",
+                "so_b60"
+              ],
+              "n_levels": 4
+            }
+          ],
+          "interpretation": "Detection saturates across 3 severity band(s) for stuck open faults. This indicates the current model/threshold/persistence combination cannot differentiate these severity levels \u2014 the detector reaches its performance ceiling. For publication: report the saturation band as the 'detection-equivalent range' and note it in the limitations section."
+        },
+        "supply_curve": {
+          "n_plateau_bands": 0,
+          "plateau_details": [],
+          "interpretation": "No saturation plateaus found for supply curve."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+scope,gated_steps,alarmed_steps,state_conflict_abstain,state_single_stuck_open,ladder_stuck_open,ladder_none,state_no_signature_abstain,state_single_supply_curve
+fault_window,108,83,67.0,16.0,77.0,6,,
+normal,13157,24,,,,24,21.0,3.0
