@@ -1,4 +1,4 @@
-# Integrated fault detection and supervisory compensation for hydronic heating faults in district-heated buildings
+# Integrated fault detection and supervisory compensation for hydronic radiator faults in district-heated buildings
 
 Code, models and simulation inputs for the study of the same name, submitted
 to *Results in Engineering*.
@@ -151,7 +151,9 @@ fault-injection logic, and all Python code are covered by the MIT licence in
 ## Citation
 
 Monghasemi, N., Vouros, S., Kyprianidis, K., Vadiee, A. *Integrated fault
-detection and supervisory compensation for hydronic heating faults in
+detection and supervisory compensation for hydronic radiator faults in
 district-heated buildings.* Submitted to Results in Engineering.
 
-Until the article appears, please cite this repository directly.
+The software itself is archived on Zenodo. Use the concept DOI
+`10.5281/zenodo.21862959`, which always resolves to the latest version.
+`CITATION.cff` carries both citations in machine-readable form.
