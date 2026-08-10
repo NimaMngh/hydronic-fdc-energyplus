@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Phase 8: Journal-Ready Figure Refinements & Results Narrative
+Phase 8: Refined Figures & Results Narrative
 ==============================================================
 Reads Phase 6 & 7 outputs and produces:
 
@@ -10,15 +10,13 @@ Reads Phase 6 & 7 outputs and produces:
 3) Detection comparison bar chart
 4) Refined compensability spectrum with annotations
 
+Every figsize matches the width the figure is actually rendered at, so fonts
+come out at true size instead of being scaled by the typesetter. Two page
+formats are supported: a single-column layout (the default) and a narrower
+book-style stock, selected with --narrow.
+
 Author : Nima Monghasemi
 Date   : 2026-03-03
-Revised: 2026-03 — figure sizing corrected for Energy and Buildings
-         at 0.85\textwidth (5.4 in display width). All figsize values
-         now match the rendered width so fonts appear at true size.
-Revised: 2026-04 — added --kappa flag for MDU dissertation template
-         (B5-like stock 169×239 mm, textwidth = 113 mm = 4.45 in).
-         3-panel fault figures (FIG16A/B/E) use kappa-optimised sizing
-         so fonts render at 1:1 when included with width=\textwidth.
 """
 
 from __future__ import annotations
@@ -60,20 +58,19 @@ FAULT_LABELS_INLINE = {
 }
 
 # ── Display widths ──
-# Energy & Buildings textwidth ≈ 6.38 in (single column).
-# Figures included at 0.85\textwidth → 5.42 in display width.
-# figsize width is set to match so fonts render at 1:1.
-FIG_W_085 = 5.4   # for \includegraphics[width=0.85\textwidth]  (journal)
-FIG_W_100 = 6.4   # for \includegraphics[width=\textwidth]      (journal)
+# Single-column textwidth ≈ 6.38 in. Figures included at 0.85\textwidth come
+# out 5.42 in wide, so figsize is set to match and fonts render at 1:1.
+FIG_W_085 = 5.4   # for \includegraphics[width=0.85\textwidth]
+FIG_W_100 = 6.4   # for \includegraphics[width=\textwidth]
 
-# ── MDU Kappa (B5-like: 169×239 mm stock) ──
+# ── Narrow book-style stock (169×239 mm) ──
 # Page geometry:
 #   \setstocksize{239mm}{169mm}
 #   \usepackage[left=25mm,right=25mm,top=20mm,bottom=20mm,bindingoffset=6mm]{geometry}
 # textwidth = 169 − 25 − 25 − 6 = 113 mm = 4.449 in
 # textheight = 239 − 20 − 20     = 199 mm = 7.835 in
 # Figures included at width=\textwidth → 4.45 in display width.
-FIG_W_KAPPA = 4.45   # for \includegraphics[width=\textwidth]   (kappa)
+FIG_W_NARROW = 4.45   # for \includegraphics[width=\textwidth]
 
 # Journal-friendly matplotlib defaults (render at true size)
 JOURNAL_RC = {
@@ -358,26 +355,26 @@ def fig_fault_refined(fault_type: str,
                       fault_start: pd.Timestamp,
                       fault_end: pd.Timestamp,
                       out_path: Path,
-                      kappa: bool = False):
+                      narrow: bool = False):
     """Cleaner 3-panel figure with fixed formatting.
 
     Parameters
     ----------
-    kappa : bool
-        If True, size the figure for the MDU kappa template
-        (B5-like, textwidth = 113 mm = 4.45 in, included at
-        width=\\textwidth).  If False (default), size for
-        Energy and Buildings at 0.85\\textwidth (5.4 in).
+    narrow : bool
+        If True, size the figure for the narrow book-style stock
+        (textwidth = 113 mm = 4.45 in, included at full
+        textwidth).  If False (default), size for a single-column
+        layout at 0.85 textwidth (5.4 in).
     """
-    if kappa:
-        # MDU kappa: 169×239 mm stock, textwidth = 113 mm = 4.45 in
+    if narrow:
+        # 169×239 mm stock, textwidth = 113 mm = 4.45 in
         # Figures included at width=\textwidth → 4.45 in display
         # Height 5.0 in → panels (a) 2.68 in, (b) 1.79 in, (c) 0.54 in
         # Figure + caption ≈ 74 % of textheight — fits well on page
-        fig_w = FIG_W_KAPPA   # 4.45 in
+        fig_w = FIG_W_NARROW   # 4.45 in
         fig_h = 5.0           # in
     else:
-        # Energy & Buildings: textwidth ≈ 6.38 in, 0.85\tw = 5.42 in
+        # Single column: textwidth ≈ 6.38 in, 0.85 tw = 5.42 in
         fig_w = FIG_W_085     # 5.4 in
         fig_h = 4.6           # in
 
@@ -695,7 +692,7 @@ def generate_narrative(kpi_df, recovery_df, det_df, out_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Phase 8: Refined journal figures + results narrative."
+        description="Phase 8: Refined figures + results narrative."
     )
     parser.add_argument("--project-dir", default=None)
     parser.add_argument("--runs-dir", default="runs")
@@ -703,8 +700,8 @@ def main():
     parser.add_argument("--out-dir", default="plots/paper_figures_refined")
     parser.add_argument("--pad-hours", type=float, default=6.0)
     parser.add_argument(
-        "--kappa", action="store_true",
-        help="Use MDU kappa template sizing (B5-like, textwidth=113 mm). "
+        "--narrow", action="store_true",
+        help="Size for the narrow book-style stock (textwidth=113 mm). "
              "Affects only the 3-panel fault figures (FIG16A/B/E). "
              "In LaTeX, include these with width=\\textwidth.",
     )
@@ -719,16 +716,16 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 72)
-    print("PHASE 8: JOURNAL-READY FIGURES & NARRATIVE")
+    print("PHASE 8: REFINED FIGURES & NARRATIVE")
     print(f"  Project dir   : {project_dir}")
     print(f"  Synthesis dir : {synth_dir}")
     print(f"  Output dir    : {out_dir}")
-    if args.kappa:
-        print(f"  Mode          : KAPPA (MDU B5, textwidth=113 mm)")
-        print(f"  3-panel figs  : figsize=({FIG_W_KAPPA}, 5.0) in")
+    if args.narrow:
+        print(f"  Mode          : NARROW (169x239 mm stock)")
+        print(f"  3-panel figs  : figsize=({FIG_W_NARROW}, 5.0) in")
         print(f"  LaTeX include : width=\\textwidth")
     else:
-        print(f"  Mode          : JOURNAL (Energy & Buildings)")
+        print(f"  Mode          : SINGLE COLUMN")
         print(f"  3-panel figs  : figsize=({FIG_W_085}, 4.6) in")
     print("=" * 72)
 
@@ -780,7 +777,7 @@ def main():
         fs, fe = fault_intervals[ft]
         fig_fault_refined(ft, all_windows[ft], fs, fe,
                           out_dir / f"fig_comparison_{ft}",
-                          kappa=args.kappa)
+                          narrow=args.narrow)
 
     fig_combined_cross_fault(all_windows, fault_intervals,
                              out_dir / "fig_combined_cross_fault")

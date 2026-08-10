@@ -1,7 +1,6 @@
 """
 Offline ML Training for the Integrated FDC Framework
 =====================================================
-Journal Extension of ICAE2025 Paper (Applied Energy)
 
 Reads the fault-free baseline CSV produced by Phase1_PoC.py,
 engineers features, trains OCSVM / Isolation Forest / LOF,
@@ -661,7 +660,7 @@ def print_validation_summary(scores, thresholds, X):
     print("\n  Deployment recommendation :")
     print(f"    Use the 'default' threshold (contamination = {CONTAMINATION})")
     print( "    as the starting operating point.  The parametric analysis")
-    print( "    in the journal paper will sweep p1 -> p10 for sensitivity curves.")
+    print( "    for the paper sweeps p1 -> p10 for the sensitivity curves.")
 
 
 # ================================================================
@@ -673,7 +672,6 @@ if __name__ == "__main__":
     t_start = datetime.now()
     print("=" * 65)
     print("   OFFLINE ML TRAINING — FDC Framework")
-    print("   Journal Extension of ICAE2025 -> Applied Energy")
     print(f"   {t_start.strftime('%Y-%m-%d  %H:%M:%S')}")
     print("=" * 65)
 

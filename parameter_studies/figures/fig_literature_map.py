@@ -2,7 +2,7 @@
 """
 Literature positioning map – Figure 1
 Final: grid-snapped positions, no shaded region, clean layout.
-Sized for Energy and Buildings (elsarticle, 0.95\textwidth ~ 6.0 in).
+Sized for a single-column layout at 0.95 textwidth (~6.0 in).
 """
 
 import matplotlib

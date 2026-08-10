@@ -8,8 +8,8 @@ Combined severity panel: 1x3 subplots, one per fault type
   - Shared y-axis labels on outer edges only
   - Middle panel y-ticks hidden on both axes
 
-Revised: figsize matched to Energy & Buildings \textwidth (6.4 in)
-so fonts render at true size without LaTeX downscaling.
+figsize matches the rendered textwidth (6.4 in) so fonts come out at
+true size without LaTeX downscaling.
 """
 
 import matplotlib
@@ -21,7 +21,7 @@ import pandas as pd
 from pathlib import Path
 
 # -----------------------------------------------------------------------
-# Journal style — sized for 1:1 rendering at \textwidth
+# Paper style — sized for 1:1 rendering at textwidth
 # -----------------------------------------------------------------------
 JOURNAL_RC = {
     "pdf.fonttype":     42,
@@ -66,7 +66,7 @@ INVERT_X = {"stuck_closed": True, "stuck_open": False, "supply_curve": False}
 F1_COLOR  = "#1565C0"
 DDH_COLOR = "#C62828"
 
-# Display width: Energy & Buildings textwidth ~ 6.38 in
+# Display width: single-column textwidth ~ 6.38 in
 FIG_W = 6.4
 
 def get_plateau_spans(x, y, tol=1e-6, min_points=3):
