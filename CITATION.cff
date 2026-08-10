@@ -60,8 +60,8 @@ keywords:
   - anomaly detection
 license: MIT
 repository-code: 'https://github.com/NimaMngh/hydronic-fdc-energyplus'
-version: 1.0.0
-date-released: '2026-08-09'
+version: 1.0.2
+date-released: '2026-08-10'
 preferred-citation:
   type: article
   title: >-
