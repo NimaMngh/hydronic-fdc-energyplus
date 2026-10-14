@@ -1,7 +1,6 @@
 cff-version: 1.2.0
 message: >-
-  If you use this software, please cite both the software and the associated
-  article below.
+  If you use this software, please cite the associated article below.
 title: "Integrated fault detection and supervisory compensation for hydronic radiator faults in district-heated buildings"
 abstract: >-
   Code, trained detectors and simulation inputs accompanying the article

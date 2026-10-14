@@ -166,8 +166,8 @@ If you use this code or data, please cite the article:
 }
 ```
 
-To cite the software itself, use the metadata in `CITATION.cff`, from which
-GitHub renders a "Cite this repository" button.
+The same citation is in `CITATION.cff`, from which GitHub renders a "Cite this
+repository" button.
 
 ## License
 
