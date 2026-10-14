@@ -14,7 +14,7 @@ estimated afterwards.
 
 The detectors (one-class SVM, isolation forest, local outlier factor) are
 trained only on a fault-free heating season, so no faulty data is needed to
-commission them. Across 48 simulations the framework recovers a
+commission them. Across 45 simulations the framework recovers a
 fault-dependent share of the discomfort a fault causes, which is the study's
 main point: control-type faults can be compensated automatically, while
 physically constrained faults hit a hydraulic ceiling and are better routed to
@@ -70,7 +70,7 @@ separate a system-level supply fault from a local valve fault.
 | Supply-setpoint bias | Python API, biasing the plant supply setpoint | supply temperature below baseline, normal flow, several zones under-delivering |
 
 The severity sweep varies each one over five levels: flow fractions from 0.10
-to 0.70 for the stuck-closed valve, thermostat bias from 0.5 to 6 K, and
+to 0.70 for the stuck-closed valve, thermostat bias from 0.5 to 6 °C, and
 supply-setpoint bias from 2 to 15 K.
 
 ## Requirements
