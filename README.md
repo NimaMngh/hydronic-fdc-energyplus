@@ -1,8 +1,8 @@
 # Integrated fault detection and supervisory compensation for hydronic radiator faults in district-heated buildings
 
-Code, models and simulation inputs for the study of the same name, published
-in *Results in Engineering* (2026):
-https://doi.org/10.1016/j.rineng.2026.113471
+Code, models and simulation inputs accompanying:
+
+> Monghasemi, N.; Vouros, S.; Kyprianidis, K.; Vadiee, A. Integrated fault detection and supervisory compensation for hydronic radiator faults in district-heated buildings. *Results in Engineering* **2026**. https://doi.org/10.1016/j.rineng.2026.113471
 
 Most fault detection and diagnostics work stops at identifying that something
 is wrong. This study closes the loop: three unsupervised detectors run inside
@@ -104,15 +104,6 @@ different minor version.
 | `results/` | Derived KPI tables, in CSV and LaTeX form |
 | `*.idf` | The baseline model and one variant per fault |
 
-Simulation output is not committed. Each run writes a roughly 7 MB
-`fdc_runtime_log.csv` into `runs/`, which `.gitignore` excludes; the analysis
-scripts read those logs, and the derived tables in `results/` are what the
-repository carries instead.
-
-The article's figures are not included either. The scripts that draw them are
-here in `analysis/` and `parameter_studies/figures/` so every figure can be
-regenerated from the tables in `results/` and the run logs.
-
 ## Running it
 
 Train the detectors, then run a fault case:
@@ -141,24 +132,56 @@ The severity IDFs are generated rather than edited by hand:
 python severity/idfs/patch_idf_flow_fraction.py --batch --project-root . --output-dir severity/idfs
 ```
 
-## Provenance and license
+## Data availability
 
-The prototype building model was developed by Pacific Northwest National
-Laboratory for the US Department of Energy; the original citations are kept in
-the comment header of each IDF file. Modifications to the HVAC system, the EMS
-fault-injection logic, and all Python code are covered by the MIT license in
-`LICENSE`.
+Simulation output is not committed. Each run writes a roughly 7 MB
+`fdc_runtime_log.csv` into `runs/`, which `.gitignore` excludes; the analysis
+scripts read those logs, and the derived tables in `results/` are what the
+repository carries instead.
+
+The article's figures are not included either. The scripts that draw them are
+here in `analysis/` and `parameter_studies/figures/` so every figure can be
+regenerated from the tables in `results/` and the run logs.
+
+An archived snapshot of the repository is deposited on Zenodo:
+https://doi.org/10.5281/zenodo.21869564 (v1.0.2, the version used in the
+article). The concept DOI https://doi.org/10.5281/zenodo.21862959 always
+resolves to the latest version.
 
 ## Citation
 
-If you use this code, please cite the article:
+If you use this code or data, please cite the article:
 
-Monghasemi, N., Vouros, S., Kyprianidis, K., Vadiee, A. *Integrated fault
-detection and supervisory compensation for hydronic radiator faults in
-district-heated buildings.* Results in Engineering (2026).
-https://doi.org/10.1016/j.rineng.2026.113471
+> Monghasemi, N.; Vouros, S.; Kyprianidis, K.; Vadiee, A. Integrated fault detection and supervisory compensation for hydronic radiator faults in district-heated buildings. *Results in Engineering* **2026**. https://doi.org/10.1016/j.rineng.2026.113471
 
-The software itself is archived on Zenodo. Use the concept DOI
-`10.5281/zenodo.21862959`, which always resolves to the latest version. The
-version used in the article is v1.0.2, `10.5281/zenodo.21869564`.
-`CITATION.cff` carries both citations in machine-readable form.
+```bibtex
+@Article{rineng2026113471,
+  author       = {Monghasemi, Nima and Vouros, Stavros and Kyprianidis, Konstantinos and Vadiee, Amir},
+  title        = {Integrated fault detection and supervisory compensation for hydronic radiator faults in district-heated buildings},
+  journal      = {Results in Engineering},
+  year         = {2026},
+  url          = {https://doi.org/10.1016/j.rineng.2026.113471},
+  issn         = {2590-1230},
+  doi          = {10.1016/j.rineng.2026.113471}
+}
+```
+
+To cite the software itself, use the metadata in `CITATION.cff`, from which
+GitHub renders a "Cite this repository" button.
+
+## License
+
+The code in this repository is released under the MIT License; see `LICENSE`.
+This covers all Python code and the changes made for this study to the HVAC
+system and the EMS fault-injection logic in the IDF files.
+
+The underlying building model is not ours to license. The IDF files are
+modified from the DOE Commercial Prototype Building Models, developed by
+Pacific Northwest National Laboratory for the U.S. Department of Energy
+(https://www.energycodes.gov/prototype-building-models). The original
+citations are retained in the comment header of each IDF file.
+
+## Authors
+
+Nima Monghasemi, Stavros Vouros, Konstantinos Kyprianidis, and Amir Vadiee.
+Department of Engineering Sciences, Mälardalen University, Västerås, Sweden.
