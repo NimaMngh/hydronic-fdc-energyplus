@@ -1,14 +1,15 @@
 # Integrated fault detection and supervisory compensation for hydronic radiator faults in district-heated buildings
 
-Code, models and simulation inputs for the study of the same name, submitted
-to *Results in Engineering*.
+Code, models and simulation inputs for the study of the same name, published
+in *Results in Engineering* (2026):
+https://doi.org/10.1016/j.rineng.2026.113471
 
 Most fault detection and diagnostics work stops at identifying that something
 is wrong. This study closes the loop: three unsupervised detectors run inside
 the EnergyPlus solver through the Python API, a signature ladder decides which
 fault they are seeing, and a supervisory controller adjusts the
-district-heating supply setpoint in response — all within the same simulation,
-so the corrected behaviour feeds back into the physics rather than being
+district-heating supply setpoint in response, all within the same simulation,
+so the corrected behavior feeds back into the physics rather than being
 estimated afterwards.
 
 The detectors (one-class SVM, isolation forest, local outlier factor) are
@@ -28,7 +29,7 @@ in delivered hydronic energy:
 |---|---|---|---|
 | Stuck-open valve (over-delivery) | 68.8 % | +23.1 % | 15 % less energy than the uncompensated fault |
 | Supply-setpoint bias | 57.2 % | -0.8 % | compensation raises the return-water temperature |
-| Stuck-closed valve | 38.6 % | -7.1 % | hydraulic ceiling — flow, not supply temperature, is the constraint |
+| Stuck-closed valve | 38.6 % | -7.1 % | hydraulic ceiling: flow, not supply temperature, is the constraint |
 
 Best detection configuration per fault, against a shared fault-free baseline
 of 13,289 gated timesteps:
@@ -43,7 +44,7 @@ The supply-setpoint bias is the hard case. Recall is high but precision is
 not, because a slow system-wide drift resembles ordinary operation to a
 detector trained on zone-level features. That is also why its diagnosis path
 reads the supply temperature directly instead of inferring the fault from zone
-behaviour alone.
+behavior alone.
 
 ## Model
 
@@ -95,7 +96,7 @@ different minor version.
 | Path | Contents |
 |---|---|
 | `Offline_ML_training.py` | Trains the three detectors on the fault-free log and calibrates percentile thresholds |
-| `runtime/` | In-the-loop runners and their run configs — Phase 4 detects only, Phase 5 adds diagnosis and compensation |
+| `runtime/` | In-the-loop runners and their run configs (Phase 4 detects only; Phase 5 adds diagnosis and compensation) |
 | `analysis/` | Post-hoc threshold and persistence sweeps, cross-fault synthesis, manuscript figures |
 | `severity/` | Severity-sweep IDFs, configs and analysis |
 | `parameter_studies/` | Compensation-target and ramp-gain sweeps, and the compound-fault stress tests |
@@ -124,7 +125,7 @@ python runtime/Phase5_ML_compensate.py runtime/run_config_comp_stuckclosed.json
 
 Phase 4 logs anomaly scores without acting on them, which is what the
 threshold sweeps in `analysis/` consume. Phase 5 additionally diagnoses and
-compensates: it ramps the supply setpoint from the 60 °C baseline towards a
+compensates: it ramps the supply setpoint from the 60 °C baseline toward a
 per-fault target of 70, 50 and 70 °C, at a gain of 0.2 per timestep.
 
 Compensation writes to the same `HW-Loop-Temp-Schedule` actuator that the
@@ -140,20 +141,24 @@ The severity IDFs are generated rather than edited by hand:
 python severity/idfs/patch_idf_flow_fraction.py --batch --project-root . --output-dir severity/idfs
 ```
 
-## Provenance and licence
+## Provenance and license
 
 The prototype building model was developed by Pacific Northwest National
 Laboratory for the US Department of Energy; the original citations are kept in
 the comment header of each IDF file. Modifications to the HVAC system, the EMS
-fault-injection logic, and all Python code are covered by the MIT licence in
+fault-injection logic, and all Python code are covered by the MIT license in
 `LICENSE`.
 
 ## Citation
 
+If you use this code, please cite the article:
+
 Monghasemi, N., Vouros, S., Kyprianidis, K., Vadiee, A. *Integrated fault
 detection and supervisory compensation for hydronic radiator faults in
-district-heated buildings.* Submitted to Results in Engineering.
+district-heated buildings.* Results in Engineering (2026).
+https://doi.org/10.1016/j.rineng.2026.113471
 
 The software itself is archived on Zenodo. Use the concept DOI
-`10.5281/zenodo.21862959`, which always resolves to the latest version.
+`10.5281/zenodo.21862959`, which always resolves to the latest version. The
+version used in the article is v1.0.2, `10.5281/zenodo.21869564`.
 `CITATION.cff` carries both citations in machine-readable form.
